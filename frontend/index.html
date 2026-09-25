@@ -1,0 +1,71 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="description" content="Find high-engagement moments in Twitch and YouTube stream chat." />
+    <title>Stream Moments</title>
+    <link rel="stylesheet" href="styles.css" />
+  </head>
+  <body>
+    <header class="site-header">
+      <a class="brand" href="#top" aria-label="Stream Moments home"><span class="brand-mark">◆</span> Stream Moments</a>
+      <span class="header-note">Local-first stream highlight finder</span>
+    </header>
+    <main id="top" class="shell">
+      <section class="hero">
+        <p class="eyebrow">TWITCH + YOUTUBE</p>
+        <h1>Find the moments<br /><em>your chat loved.</em></h1>
+        <p class="lede">Upload a chat export, tune the signal, and get a clean, ranked highlight timeline. Processing happens in this browser.</p>
+      </section>
+
+      <section class="workspace" aria-label="Stream analysis workspace">
+        <form id="analysis-form" class="controls">
+          <div class="control-grid">
+            <label>Platform
+              <select id="platform" name="platform"><option value="twitch">Twitch</option><option value="youtube">YouTube</option></select>
+            </label>
+            <label>VOD / video ID
+              <input id="video-id" name="videoId" placeholder="e.g. 123456789 or dQw4w9WgXcQ" maxlength="100" />
+            </label>
+          </div>
+          <label class="upload-zone" id="upload-zone" for="chat-file">
+            <input id="chat-file" type="file" accept=".json,.csv,application/json,text/csv" />
+            <span class="upload-icon">↑</span>
+            <span><strong>Drop chat export here</strong> or choose a JSON / CSV file</span>
+            <small>Supports generic exports and TwitchDownloader JSON.</small>
+          </label>
+          <p id="file-status" class="file-status" aria-live="polite">No file selected</p>
+          <details class="tuning"><summary>Detection settings</summary>
+            <div class="control-grid tuning-grid">
+              <label>Window seconds<input id="window-seconds" type="number" value="15" min="1" max="300" /></label>
+              <label>Minimum messages<input id="min-messages" type="number" value="5" min="1" max="10000" /></label>
+              <label>Z-score threshold<input id="z-threshold" type="number" value="2" min="0" max="20" step="0.1" /></label>
+            </div>
+          </details>
+          <button class="primary-button" type="submit">Analyze chat <span>→</span></button>
+        </form>
+
+        <aside class="how-it-works">
+          <p class="eyebrow">HOW IT WORKS</p>
+          <ol><li><span>01</span> Add a chat replay export.</li><li><span>02</span> We measure message bursts over time.</li><li><span>03</span> Review and export the strongest moments.</li></ol>
+          <p class="privacy"><strong>Your data stays local.</strong> This page does not upload files or require an API key.</p>
+        </aside>
+      </section>
+
+      <section id="results" class="results" hidden aria-live="polite">
+        <div class="results-head"><div><p class="eyebrow">ANALYSIS READY</p><h2 id="result-title">Candidate moments</h2></div><div class="result-actions"><button id="download-json" class="secondary-button" type="button">Download JSON</button><button id="download-csv" class="secondary-button" type="button">Download CSV</button></div></div>
+        <div class="metrics"><article><strong id="message-count">0</strong><span>messages analyzed</span></article><article><strong id="moment-count">0</strong><span>candidate moments</span></article><article><strong id="peak-rate">0</strong><span>peak msgs / window</span></article></div>
+        <div id="empty-state" class="empty-state" hidden>No moments matched these settings. Try a lower threshold or minimum message count.</div>
+        <div id="moment-list" class="moment-list"></div>
+      </section>
+
+      <section class="integration-note">
+        <p class="eyebrow">OPTIONAL DESKTOP INTEGRATION</p>
+        <p>For VOD downloads, FFmpeg thumbnails, open-vocabulary CLIP frame labels, reaction attribution, and optional Gemini explanations, use the included Python companion. API credentials remain in <code>.env</code>, never in this frontend.</p>
+      </section>
+    </main>
+    <template id="moment-template"><article class="moment-card"><div class="moment-time"></div><div class="moment-body"><div class="moment-heading"><h3></h3><span class="score"></span></div><p class="keywords"></p><blockquote></blockquote></div></article></template>
+    <script src="app.js"></script>
+  </body>
+</html>
