@@ -1,6 +1,6 @@
 # Viewtopsy
 
-Viewtopsy is a local-first tool for finding the most interesting moments in a stream or VOD from chat activity.
+Viewtopsy is a tool for finding the most interesting moments in a stream or VOD from chat activity.
 
 It helps you:
 - analyze chat exports from Twitch or YouTube
