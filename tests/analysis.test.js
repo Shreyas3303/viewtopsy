@@ -94,8 +94,12 @@ test("CSV and chapter exports", () => {
   ];
   const csv = A.toCsv(moments, "twitch", "123").split("\n");
   assert.equal(csv.length, 3);
-  assert.match(csv[1], /^1,10:00,600,50,30,9,7,boss \| down,https:\/\/www\.twitch\.tv\/videos\/123\?t=0h10m0s,"Boss, ""finally"""$/);
+  assert.match(csv[1], /^1,10:00,600,50,30,9,7,,boss \| down,,,,,https:\/\/www\.twitch\.tv\/videos\/123\?t=0h10m0s,"Boss, ""finally"""$/);
   assert.equal(A.toChapters(moments), '1:00 raid\n10:00 Boss, "finally"');
+  moments[1].ai = { title: "Raid arrives", triggerLabel: "Alert, donation or sub", whatHappened: "A raid", confidence: "high" };
+  moments[1].reaction = "Mostly hype";
+  assert.match(A.toCsv(moments, "twitch", "").split("\n")[2], /,Mostly hype,raid,Raid arrives,"Alert, donation or sub",A raid,high,,$/);
+  assert.equal(A.toChapters(moments), '1:00 Raid arrives\n10:00 Boss, "finally"');
 });
 
 test("parses yt-dlp YouTube live_chat.json", () => {

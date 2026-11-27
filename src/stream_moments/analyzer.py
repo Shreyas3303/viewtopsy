@@ -50,15 +50,21 @@ def _samples(messages: list[ChatMessage], keywords: list[str], limit: int = 6) -
     return [text for _, _, text in sorted(unique)[:limit]]
 
 
-def build_timeline(messages: list[ChatMessage], window_seconds: float) -> list[int]:
-    """Message count per window, from 0 up to the window holding the last message."""
+def build_timeline(messages: list[ChatMessage], window_seconds: float) -> tuple[list[int], float]:
+    """Message count per window, from the first message's window to the last one's.
+
+    Returns (counts, start_seconds). Starting at the first message rather than 0:00
+    keeps a trimmed export (say 1:00:00-1:30:00) from counting an empty first
+    hour as the stream's normal pace.
+    """
     if not messages:
-        return []
+        return [], 0.0
+    first = int(min(message.timestamp for message in messages) // window_seconds)
     last = int(max(message.timestamp for message in messages) // window_seconds)
-    counts = [0] * (last + 1)
+    counts = [0] * (last - first + 1)
     for message in messages:
-        counts[int(message.timestamp // window_seconds)] += 1
-    return counts
+        counts[int(message.timestamp // window_seconds) - first] += 1
+    return counts, first * window_seconds
 
 
 def find_moments(
@@ -83,7 +89,11 @@ def find_moments(
         return []
 
     messages = sorted(messages, key=lambda message: message.timestamp)
-    counts = build_timeline(messages, window_seconds)
+    counts, timeline_start = build_timeline(messages, window_seconds)
+
+    def at(index: int) -> float:  # window index -> stream seconds
+        return timeline_start + index * window_seconds
+
     mean = sum(counts) / len(counts)
     deviation = math.sqrt(sum((count - mean) ** 2 for count in counts) / len(counts))
     z_scores = [(count - mean) / deviation if deviation else 0.0 for count in counts]
@@ -100,14 +110,14 @@ def find_moments(
 
     moments: list[Moment] = []
     for start, end in groups:
-        window_start = start * window_seconds
-        window_end = (end + 1) * window_seconds
+        window_start = at(start)
+        window_end = at(end + 1)
         inside = [message for message in messages if window_start <= message.timestamp < window_end]
         peak = max(range(start, end + 1), key=lambda i: (counts[i], -i))
         keywords = _keywords(inside)
         moments.append(Moment(
             # Start a window before the peak so playback catches the build-up.
-            timestamp=max(0.0, peak * window_seconds - window_seconds),
+            timestamp=max(0.0, at(peak) - window_seconds),
             window_start=window_start,
             window_end=window_end,
             message_count=len(inside),
@@ -115,7 +125,7 @@ def find_moments(
             z_score=round(z_scores[peak], 2),
             sample_messages=_samples(inside, keywords),
             keywords=keywords,
-            peak_time=peak * window_seconds,
+            peak_time=at(peak),
             peak_count=counts[peak],
             intensity=round(counts[peak] / mean, 1) if mean else 0.0,
             unique_chatters=len({message.author for message in inside if message.author}),

@@ -23,20 +23,26 @@ The sample is a made-up 2-hour stream with nine planted events (a raid, a jump s
    | Anything else | CSV or JSON with a `timestamp` (seconds, `MM:SS` or `H:MM:SS`), a `message` and an optional `author` column |
 
 2. **Drop the file** into Viewtopsy.
-3. Optionally **paste the VOD link**. Every moment then gets a *Watch* button that opens the video at that time.
+3. Optionally **paste the VOD link**. Every moment then gets a *Watch* button that opens the video at that time. TwitchDownloader exports fill this in for you.
 4. Click **Find moments**.
+5. Optionally **add the video file** for frames, and an **API key** for explanations.
+
+**Trimmed downloads:** if you downloaded part of a stream (say 1:00:00–1:30:00) with TwitchDownloader, timestamps still match the full stream on Twitch, and *Video starts at* is filled in from the chat file so frames line up with your trimmed video. For other tools, set *Video starts at* to where your video file begins in the stream.
 
 ### What you get
 
 - **Chat activity chart** across the whole stream with numbered markers on each spike. Click a marker to jump to that moment.
 - **Moment cards** ranked by how far chat jumped above its normal pace, with the top words chat was using and a few sample messages.
 - **Sensitivity** (Fewer / Balanced / More) to trade fewer, bigger moments for more candidates. Advanced settings let you change the window length and thresholds.
+- **Reaction reading** for every moment: laughter, hype, shock, tension, sad, wholesome, disapproval, confusion, chat voting, support/alerts. It understands emotes (KEKW, monkaS, Pog, W/L…), channel emotes by their ending (`cohhLUL`, `kaicenatW`) and stretched words (LMAOOOO).
+- **Frames from your video** (optional): add the video file and each moment gets a strip of 6 frames from the 20 seconds before chat spiked, since chat reacts a few seconds after the cause. The video is read in your browser and never uploaded.
+- **AI explanations** (optional): with your own Anthropic API key, each moment's frames, chat and reaction profile go to Claude, which returns what happened, why chat reacted, the likely trigger (gameplay, streamer, guest, alert, chat itself…), and a confidence level. Only moments you explain are sent. The model can't hear audio yet, so moments caused by something said get low confidence.
 - **Stars and notes** so you can shortlist moments and name your clips.
 - **Exports**: copy as YouTube chapters, or download CSV / JSON. If you starred anything, only starred moments are exported.
 
 ## How detection works
 
-1. Chat is split into short windows (15 seconds by default) and each window's messages are counted.
+1. Chat is split into short windows (15 seconds by default) and each window's messages are counted, from the first message to the last.
 2. Each window is compared with the stream's average using a z-score (how many standard deviations above normal it is).
 3. Windows above the threshold, with at least the minimum number of messages, become moments. Back-to-back windows merge into one moment.
 4. Each moment's timestamp is set one window *before* its peak, so playback catches the build-up instead of starting mid-reaction.
@@ -76,6 +82,9 @@ frontend/            Browser app (no build step)
   styles.css
   app.js             Interface
   analysis.js        Detection, parsing and export (shared with tests)
+  reactions.js       Emote-aware reaction reading
+  frames.js          Grabs frames from a local video file
+  explain.js         Builds the Claude request and reads its answer
   sample.js          Generates the demo stream
 src/stream_moments/  Python package and CLI
 tests/               Python (pytest) and JavaScript (node --test) tests

@@ -87,4 +87,18 @@ def test_rejects_bad_settings():
 
 
 def test_build_timeline():
-    assert build_timeline([ChatMessage(0, "a"), ChatMessage(14, "b"), ChatMessage(31, "c")], 15) == [2, 0, 1]
+    assert build_timeline([ChatMessage(0, "a"), ChatMessage(14, "b"), ChatMessage(31, "c")], 15) == ([2, 0, 1], 0)
+    assert build_timeline([ChatMessage(3605, "a"), ChatMessage(3631, "b")], 15) == ([1, 0, 1], 3600)
+
+
+def test_trimmed_chat_keeps_stream_times_and_ignores_the_missing_hour():
+    """Chat exported for 1:00:00-1:10:00 only: the empty first hour must not count as normal pace."""
+    messages = [ChatMessage(3600 + m.timestamp, m.text, m.author) for m in quiet_stream(10)]
+    messages += burst(3900, 40, "NO WAY", spread=0.3)
+    messages.sort(key=lambda m: m.timestamp)
+    moments = find_moments(messages, z_threshold=2)
+    assert len(moments) == 1
+    assert moments[0].peak_time == 3900
+    assert moments[0].baseline_count < 3  # pace from the clip itself, not diluted by an empty hour
+    padded = find_moments(messages + [ChatMessage(1, "early")], z_threshold=2)
+    assert padded[0].baseline_count < moments[0].baseline_count  # proves the old behaviour would differ

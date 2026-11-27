@@ -71,7 +71,7 @@
 
         <div class="metrics">
           <article><strong id="metric-messages">0</strong><span>messages</span></article>
-          <article><strong id="metric-duration">0:00</strong><span>stream length</span></article>
+          <article><strong id="metric-duration">0:00</strong><span id="metric-duration-label">stream length</span></article>
           <article><strong id="metric-chatters">0</strong><span>chatters</span></article>
           <article><strong id="metric-moments">0</strong><span>moments found</span></article>
         </div>
@@ -83,6 +83,42 @@
           </div>
           <div id="timeline" class="timeline" role="img" aria-label="Chat activity over the stream"></div>
           <div id="timeline-tooltip" class="timeline-tooltip" hidden></div>
+          <p id="chat-overall" class="chat-overall"></p>
+        </div>
+
+        <!-- ============ Video + AI ============ -->
+        <div class="panel insight-panel">
+          <div class="insight-block">
+            <h3>See what happened <span class="optional">optional</span></h3>
+            <p class="hint">Add the video file to see frames from the 20 seconds before each spike. It stays on your computer.</p>
+            <label class="upload-zone compact" id="video-zone" for="video-file">
+              <input id="video-file" type="file" accept="video/*,.mp4,.mkv,.webm,.mov" />
+              <span><strong>Drop the video here</strong> or click to choose</span>
+            </label>
+            <div class="video-row">
+              <label class="field inline">Video starts at
+                <input id="video-offset" value="0:00" inputmode="numeric" autocomplete="off" />
+              </label>
+              <span id="video-status" class="hint" aria-live="polite"></span>
+            </div>
+          </div>
+          <div class="insight-block">
+            <h3>Explain moments with AI <span class="optional">optional</span></h3>
+            <p class="hint">Sends each moment’s frames and chat to Claude, which says what happened and why chat reacted. Uses your own Anthropic API key; only what you explain is sent.</p>
+            <div class="ai-grid">
+              <label class="field">Anthropic API key
+                <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="sk-ant-…" />
+              </label>
+              <label class="field">Model
+                <select id="ai-model"></select>
+              </label>
+            </div>
+            <div class="ai-actions">
+              <label class="check"><input id="remember-key" type="checkbox" /> Remember key on this device</label>
+              <button id="explain-all" class="primary-button small" type="button" disabled>Explain all moments</button>
+            </div>
+            <p id="ai-status" class="hint" aria-live="polite"></p>
+          </div>
         </div>
 
         <div class="toolbar panel">
@@ -149,6 +185,12 @@
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
 
+    <dialog id="frame-viewer" class="frame-viewer">
+      <img alt="" />
+      <p class="frame-caption"></p>
+      <form method="dialog"><button class="secondary-button small">Close</button></form>
+    </dialog>
+
     <template id="moment-template">
       <article class="moment-card" tabindex="-1">
         <div class="moment-side">
@@ -160,10 +202,17 @@
             <div class="intensity" aria-hidden="true"><span class="intensity-fill"></span></div>
             <p class="moment-stats"></p>
             <div class="moment-actions">
+              <button class="explain-button secondary-button small" type="button" hidden>Explain</button>
               <a class="watch-link secondary-button small" target="_blank" rel="noopener noreferrer">Watch ↗</a>
               <button class="star-button" type="button" aria-pressed="false" title="Star this moment">☆</button>
             </div>
           </div>
+          <div class="reaction-row">
+            <span class="reaction-summary"></span>
+            <ul class="reaction-chips"></ul>
+          </div>
+          <div class="filmstrip" hidden></div>
+          <div class="explanation" hidden></div>
           <ul class="keyword-list"></ul>
           <ul class="sample-list"></ul>
           <input class="note-input" type="text" maxlength="80" placeholder="Add a note or clip title…" aria-label="Note for this moment" />
@@ -172,6 +221,9 @@
     </template>
 
     <script src="analysis.js"></script>
+    <script src="reactions.js"></script>
+    <script src="frames.js"></script>
+    <script src="explain.js"></script>
     <script src="sample.js"></script>
     <script src="app.js"></script>
   </body>

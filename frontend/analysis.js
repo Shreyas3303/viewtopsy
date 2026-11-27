@@ -145,6 +145,34 @@
   }
 
   /**
+   * Reads what the export says about the video: title, channel, ID and, for a
+   * trimmed TwitchDownloader export, where the clip starts in the stream.
+   * Returns {} for formats that carry none of this.
+   */
+  function readChatInfo(raw) {
+    const trimmed = String(raw).replace(/^\uFEFF/, "").trim();
+    if (!trimmed.startsWith("{") || trimmed.includes("\n{\"")) return {};
+    let payload;
+    try {
+      payload = JSON.parse(trimmed);
+    } catch {
+      return {};
+    }
+    const video = payload && typeof payload.video === "object" ? payload.video : null;
+    if (!video) return {};
+    const number = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+    return {
+      platform: "twitch",
+      title: video.title || "",
+      channel: payload.streamer?.name || "",
+      videoId: video.id ? String(video.id) : "",
+      clipStart: number(video.start),
+      clipEnd: number(video.end),
+      streamLength: number(video.length),
+    };
+  }
+
+  /**
    * Parses a chat export file's text into sorted messages.
    * @param {string} raw file contents
    * @param {string} fileName used to detect CSV vs JSON
@@ -203,13 +231,19 @@
       .map(([word]) => word);
   }
 
-  /** Message counts per window, from 0 to the last message. */
+  /**
+   * Message counts per window, from the window holding the first message to the
+   * one holding the last. Starting at the first message (not 0:00) matters for
+   * trimmed exports: chat for 1:00:00-1:30:00 must not count an empty first hour
+   * as the stream's normal pace.
+   */
   function buildTimeline(messages, windowSeconds) {
-    if (!messages.length) return [];
+    if (!messages.length) return { counts: [], start: 0 };
+    const first = Math.floor(messages[0].timestamp / windowSeconds);
     const last = Math.floor(messages[messages.length - 1].timestamp / windowSeconds);
-    const counts = new Array(last + 1).fill(0);
-    for (const message of messages) counts[Math.floor(message.timestamp / windowSeconds)] += 1;
-    return counts;
+    const counts = new Array(last - first + 1).fill(0);
+    for (const message of messages) counts[Math.floor(message.timestamp / windowSeconds) - first] += 1;
+    return { counts, start: first * windowSeconds };
   }
 
   function stats(values) {
@@ -235,8 +269,9 @@
     if (!(minMessages >= 1)) throw new Error("Minimum messages must be at least 1.");
     if (!(threshold >= 0)) throw new Error("Spike threshold can't be negative.");
 
-    const counts = buildTimeline(messages, windowSeconds);
-    if (!counts.length) return { moments: [], timeline: [], mean: 0, deviation: 0 };
+    const { counts, start: timelineStart } = buildTimeline(messages, windowSeconds);
+    if (!counts.length) return { moments: [], timeline: [], timelineStart: 0, mean: 0, deviation: 0 };
+    const at = (index) => timelineStart + index * windowSeconds; // window index -> stream seconds
     const { mean, deviation } = stats(counts);
     const zScores = counts.map((c) => (deviation ? (c - mean) / deviation : 0));
     const hot = counts.map((c, i) => c >= minMessages && zScores[i] >= threshold);
@@ -252,8 +287,8 @@
 
     let messageIndex = 0;
     const moments = groups.map((group) => {
-      const windowStart = group.start * windowSeconds;
-      const windowEnd = (group.end + 1) * windowSeconds;
+      const windowStart = at(group.start);
+      const windowEnd = at(group.end + 1);
       while (messageIndex < messages.length && messages[messageIndex].timestamp < windowStart) messageIndex += 1;
       const inside = [];
       for (let j = messageIndex; j < messages.length && messages[j].timestamp < windowEnd; j += 1) {
@@ -268,8 +303,8 @@
       return {
         // Point at the start of the peak window, a little early, so playback
         // starts just before the reaction rather than in the middle of it.
-        timestamp: Math.max(0, peakIndex * windowSeconds - windowSeconds),
-        peakTime: peakIndex * windowSeconds,
+        timestamp: Math.max(0, at(peakIndex) - windowSeconds),
+        peakTime: at(peakIndex),
         windowStart,
         windowEnd,
         messageCount: inside.length,
@@ -285,7 +320,7 @@
 
     moments.sort((a, b) => b.zScore - a.zScore || b.messageCount - a.messageCount);
     const top = moments.slice(0, maxMoments).map((moment, i) => ({ ...moment, rank: i + 1 }));
-    return { moments: top, timeline: counts, mean, deviation };
+    return { moments: top, timeline: counts, timelineStart, mean, deviation };
   }
 
   /**
@@ -350,10 +385,15 @@
   }
 
   function toCsv(moments, platform, videoId) {
-    const header = ["rank", "timestamp", "seconds", "messages", "peak_per_window", "intensity_x", "z_score", "keywords", "link", "note"];
+    const header = [
+      "rank", "timestamp", "seconds", "messages", "peak_per_window", "intensity_x", "z_score",
+      "reaction", "keywords", "ai_title", "ai_trigger", "ai_what_happened", "ai_confidence", "link", "note",
+    ];
     const rows = moments.map((m) => [
-      m.rank, clock(m.timestamp), Math.floor(m.timestamp), m.messageCount, m.peakCount,
-      m.intensity, m.zScore, m.keywords.join(" | "), vodLink(platform, videoId, m.timestamp) || "", m.note || "",
+      m.rank, clock(m.timestamp), Math.floor(m.timestamp), m.messageCount, m.peakCount, m.intensity, m.zScore,
+      m.reaction || "", m.keywords.join(" | "),
+      m.ai?.title || "", m.ai?.triggerLabel || "", m.ai?.whatHappened || "", m.ai?.confidence || "",
+      vodLink(platform, videoId, m.timestamp) || "", m.note || "",
     ]);
     return [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
   }
@@ -362,7 +402,7 @@
   function toChapters(moments) {
     return [...moments]
       .sort((a, b) => a.timestamp - b.timestamp)
-      .map((m) => `${clock(m.timestamp)} ${m.note || m.keywords.slice(0, 3).join(" / ") || `Moment ${m.rank}`}`)
+      .map((m) => `${clock(m.timestamp)} ${m.note || m.ai?.title || m.keywords.slice(0, 3).join(" / ") || `Moment ${m.rank}`}`)
       .join("\n");
   }
 
@@ -372,6 +412,7 @@
     parseCsv,
     normalizeRow,
     parseChatExport,
+    readChatInfo,
     keywords,
     buildTimeline,
     findMoments,
