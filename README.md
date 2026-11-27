@@ -74,6 +74,8 @@ This uses Twitch's browser sign-in (implicit grant), so no client secret is need
   - The key type is detected automatically. You can still pick a specific model in the menu.
   - Explanations work when you open `frontend/index.html` yourself. Hosted previews that block outside connections can't reach the AI.
 - **Stream story strip** under the chart: the VOD's chapters (game/category) and chat's main mood over time (laughter, hype, shock, voting…), lined up with moments and quiet stretches.
+- **Click to read chat:** click any point on the chart, a stretch of the mood strip, or a chapter to see the messages from it, with their reaction mix.
+- **Stream overview:** messages a minute (average and peak), time spent in hype and the longest hype, the mood mix, when waves of new chatters arrived (including waves with no chat spike, e.g. a raid), every time chat asked for a clip (and the times it did without a spike), subs/members, bits and Super Chats.
 - **Search chat:** type a word or username to mark every mention on the chart and list the messages, each linking to the VOD 10 seconds earlier.
 - **Clip these first:** a shortlist ranked by a 0–100 clip score combining spike size, how many people reacted, first-time chatters, clip requests, spike type, AI confidence and whether it's already clipped, with the reasons shown. Also available as the **Best to clip** sort order.
 - **Suggested clip range** for each moment: starts a few seconds before the cause (the AI's cause time when it's confident, otherwise just before chat started rising) and ends when chat calms down. Marker exports use these ranges.
@@ -81,7 +83,7 @@ This uses Twitch's browser sign-in (implicit grant), so no client secret is need
 - **Spike type** for every moment: *organic reaction*, *prompted* (chat answering a question or voting), *alert-driven* (subs, gifts, raids), *copypasta / spam wave*, or *hellos / goodbyes*. Prompted and alert spikes look big but tell you less about the content.
 - **Where chat went quiet:** stretches of 3+ minutes where chat ran well below its normal pace, shaded on the chart and listed with frames. With an API key, the AI says what was happening and suggests what to do about it (cut it, speed it up…).
 - **How each part of the stream did:** engagement per game or category, from the VOD's chapters (TwitchDownloader exports include them), or per time block.
-- **Already clipped or not:** add the VOD's Twitch clips (see `fetch-clips` below) and each moment shows whether it's already clipped and how popular the top clip is. Moments nobody clipped are marked ✦. Clips where chat stayed calm are listed separately.
+- **Already clipped or not:** once you connect Twitch (beta, see below), clips are fetched automatically for each Twitch VOD. Without it you can still load a clips file (see `fetch-clips` below) and each moment shows whether it's already clipped and how popular the top clip is. Moments nobody clipped are marked ✦. Clips where chat stayed calm are listed separately.
 - **Stars and notes** so you can shortlist moments and name your clips.
 - **Exports**: copy as YouTube chapters, or download CSV / JSON. If you starred anything, only starred moments are exported.
 - **Markers for editing software**: a DaVinci Resolve marker file (Timeline › Import › Timeline Markers from EDL) and a Final Cut Pro 7 XML for Premiere Pro (File › Import; locate the video when asked). Markers line up with your video file, are colour-coded by spike type in Resolve, and carry the AI title and summary.

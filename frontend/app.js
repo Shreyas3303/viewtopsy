@@ -33,6 +33,7 @@
     signals: new Map(), // moment key -> hype length, first-timers, clip requests, audience
     mood: [], // chat's main reaction per time bucket
     search: null, // current chat search
+    panel: null, // what the message panel shows: {kind: "range", from, to, label} or null for search
     quiet: [], // quiet stretches
     segments: null,
     clips: [], // existing Twitch clips, if loaded
@@ -164,6 +165,8 @@
     state.clips = [];
     state.clipMatch = null;
     state.search = null;
+    state.panel = null;
+    state.clipsFetchedFor = "";
     $("#chat-search").value = "";
     $("#clips-status").textContent = "";
 
@@ -321,6 +324,7 @@
     renderTimeline();
     renderSegments();
     renderShortlist();
+    renderOverview();
     renderSearch();
     renderMoments();
     renderQuiet();
@@ -355,32 +359,161 @@
     }
   }
 
+  /**
+   * The message panel under the chart. Shows either search results or the
+   * messages from a clicked stretch of the stream (state.panel).
+   */
   function renderSearch() {
-    const box = $("#search-results");
-    const result = state.search;
-    const list = $("#search-list");
+    renderMessagePanel();
+  }
+
+  function openRange(from, to, label = "") {
+    state.panel = { kind: "range", from, to, label };
+    renderMessagePanel();
+    renderTimeline();
+    $("#message-panel").scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function messageRow(m, highlight = "") {
+    const href = A.vodLink(state.platform, state.videoId, Math.max(0, m.timestamp - 10));
+    const time = href
+      ? el("a", { href, target: "_blank", rel: "noopener noreferrer", textContent: A.clock(m.timestamp), title: "Watch from 10s before" })
+      : el("b", { textContent: A.clock(m.timestamp) });
+    const text = el("span", { title: m.text });
+    if (m.author) text.append(el("b", { textContent: `${m.author}: ` }));
+    const at = highlight ? m.text.toLowerCase().indexOf(highlight) : -1;
+    if (at >= 0) text.append(m.text.slice(0, at), el("mark", { textContent: m.text.slice(at, at + highlight.length) }), m.text.slice(at + highlight.length));
+    else text.append(m.text);
+    return el("li", {}, [time, text]);
+  }
+
+  function renderMessagePanel() {
+    const box = $("#message-panel");
+    const list = $("#message-list");
+    const summary = $("#message-summary");
     list.replaceChildren();
+    summary.replaceChildren();
+    const panel = state.panel;
+    const LIMIT = 300;
+
+    if (panel?.kind === "range") {
+      box.hidden = false;
+      const inside = messagesBetween(panel.from, panel.to);
+      const profile = R.profile(inside);
+      summary.append(
+        el("b", { textContent: `${A.clock(panel.from)}–${A.clock(panel.to)}` }),
+        panel.label ? ` · ${panel.label}` : "",
+        ` · ${inside.length.toLocaleString()} message${inside.length === 1 ? "" : "s"}${inside.length > LIMIT ? ` (showing the first ${LIMIT})` : ""} · ${R.describe(profile)}`,
+      );
+      if (profile.types.length) {
+        const chips = el("ul", { className: "message-chips" }, profile.types.slice(0, 5).map((t) => el("li", { textContent: `${t.label} ${Math.round(t.share * 100)}%` })));
+        summary.append(chips);
+      }
+      for (const m of inside.slice(0, LIMIT)) list.append(messageRow(m));
+      return;
+    }
+
+    const result = state.search;
     if (!result || !result.query) {
       box.hidden = true;
       return;
     }
     box.hidden = false;
-    $("#search-summary").textContent = result.total
+    summary.textContent = result.total
       ? `${result.total.toLocaleString()} message${result.total === 1 ? "" : "s"} mention “${result.query}”${result.total > result.matches.length ? ` (showing the first ${result.matches.length})` : ""}. Marked in blue on the chart.`
       : `No messages mention “${result.query}”.`;
     const lower = result.query.toLowerCase();
-    for (const m of result.matches) {
-      const href = A.vodLink(state.platform, state.videoId, Math.max(0, m.timestamp - 10));
-      const time = href
-        ? el("a", { href, target: "_blank", rel: "noopener noreferrer", textContent: A.clock(m.timestamp), title: "Watch from 10s before" })
-        : el("b", { textContent: A.clock(m.timestamp) });
-      const text = el("span", { title: m.text });
-      if (m.author) text.append(el("b", { textContent: `${m.author}: ` }));
-      const at = m.text.toLowerCase().indexOf(lower);
-      if (at >= 0) text.append(m.text.slice(0, at), el("mark", { textContent: m.text.slice(at, at + lower.length) }), m.text.slice(at + lower.length));
-      else text.append(m.text);
-      list.append(el("li", {}, [time, text]));
+    for (const m of result.matches) list.append(messageRow(m, lower));
+  }
+
+  // ---------------------------------------------------------------------------
+  // Stream overview
+  // ---------------------------------------------------------------------------
+
+  function timeButton(from, to, label) {
+    const button = el("button", { type: "button", className: "time-link", textContent: A.clock(from), title: "Show these messages" });
+    button.addEventListener("click", () => openRange(from, to, label));
+    return button;
+  }
+
+  function momentTag(key, rank) {
+    if (key == null) return el("span", { className: "tag-soft", textContent: "no chat spike here" });
+    const button = el("button", { type: "button", className: "text-button", textContent: `moment #${rank}` });
+    button.addEventListener("click", () => focusMoment(key));
+    return button;
+  }
+
+  function renderOverview() {
+    const box = $("#overview");
+    const o = I.streamOverview(state.messages, state.result, enrichedMoments());
+    if (!o) {
+      box.hidden = true;
+      return;
     }
+    box.hidden = false;
+    const stat = (value, label) => el("div", {}, [el("strong", { textContent: value }), el("span", { textContent: label })]);
+    const stats = [
+      stat(`${o.perMinute}`, "messages a minute on average"),
+      stat(`${o.peakPerMinute}`, "messages a minute at the peak"),
+      stat(`${A.clock(o.hype.seconds)}`, `in hype (${Math.round(o.hype.share * 100)}% of the time)`),
+      o.hype.longest ? stat(A.clock(o.hype.longest.duration), `longest hype (moment #${o.hype.longest.momentRank})`) : null,
+      o.audience.subShare > 0.005 ? stat(`${Math.round(o.audience.subShare * 100)}%`, "of messages from subs/members") : null,
+      o.audience.bits ? stat(o.audience.bits.toLocaleString(), "bits cheered") : null,
+      o.audience.paid ? stat(String(o.audience.paid), "Super Chats") : null,
+      stat(o.clipRequests.total ? String(o.clipRequests.total) : "0", "clip requests in chat"),
+    ].filter(Boolean);
+    $("#overview-stats").replaceChildren(...stats);
+
+    const details = [];
+
+    // Mood mix
+    const overall = R.profile(state.messages);
+    if (overall.types.length) {
+      const bars = el("div", { className: "mood-bars" }, overall.types.slice(0, 6).map((t) => {
+        const fill = el("span", { className: `mood-${t.id}` });
+        fill.style.width = `${Math.round(t.share * 100)}%`;
+        return el("div", { className: "mood-bar" }, [el("span", { textContent: t.label }), el("div", { className: "bar" }, [fill]), el("b", { textContent: `${Math.round(t.share * 100)}%` })]);
+      }));
+      details.push(el("section", {}, [
+        el("h4", { textContent: "Chat’s mood overall" }),
+        bars,
+        el("p", { className: "hint", textContent: `${Math.round(overall.readShare * 100)}% of messages had a recognisable reaction. Teach it your channel emotes in Profile to read more.` }),
+      ]));
+    }
+
+    // New chatters
+    const waves = o.newChatters.waves;
+    details.push(el("section", {}, [
+      el("h4", { textContent: "When new chatters showed up" }),
+      waves.length
+        ? el("ul", {}, waves.map((w) => el("li", {}, [timeButton(w.start, w.end, "new chatters arriving"), ` ${w.count} new chatters in a minute (usually ${w.typical}) `, momentTag(w.momentKey, w.momentRank)])))
+        : el("p", { className: "hint", textContent: "No unusual waves of new chatters." }),
+      el("p", { className: "hint", textContent: `${o.newChatters.total.toLocaleString()} people chatted in total. “New” means their first message in this chat file; the first 10 minutes are skipped.` }),
+    ]));
+
+    // Clip requests
+    const groups = o.clipRequests.groups;
+    details.push(el("section", {}, [
+      el("h4", { textContent: "Chat asking for clips" }),
+      groups.length
+        ? el("ul", {}, groups.slice(0, 8).map((g) => el("li", {}, [timeButton(g.start - 20, g.end + 10, "clip requests"), ` asked ${g.count}× `, momentTag(g.momentKey, g.momentRank)])))
+        : el("p", { className: "hint", textContent: "Nobody asked for a clip in chat (“CLIP IT”, “!clip”)." }),
+      o.clipRequests.withoutSpike.length
+        ? el("p", { className: "hint", textContent: `${o.clipRequests.withoutSpike.length} time${o.clipRequests.withoutSpike.length === 1 ? "" : "s"} chat asked for a clip without a spike. Worth a look: these can be good moments chat was too slow to hype.` })
+        : null,
+    ].filter(Boolean)));
+
+    // Money
+    if (o.audience.moneyMoments.length) {
+      details.push(el("section", {}, [
+        el("h4", { textContent: "Bits and Super Chats" }),
+        el("ul", {}, o.audience.moneyMoments.map((g) => el("li", {}, [
+          timeButton(g.start - 15, g.end + 15, "bits and Super Chats"),
+          g.bits ? ` ${g.bits.toLocaleString()} bits` : ` ${g.count} paid message${g.count === 1 ? "" : "s"}`,
+        ]))),
+      ]));
+    }
+    $("#overview-details").replaceChildren(...details);
   }
 
   function renderSegments() {
@@ -1082,7 +1215,10 @@
       const label = svg("text", { x: cx, y: cy });
       label.textContent = moment.rank;
       marker.append(label);
-      marker.addEventListener("click", () => focusMoment(moment.windowStart));
+      marker.addEventListener("click", (event) => {
+        event.stopPropagation();
+        focusMoment(moment.windowStart);
+      });
       marker.addEventListener("keydown", (event) => {
         if (event.key === "Enter" || event.key === " ") {
           event.preventDefault();
@@ -1110,6 +1246,17 @@
       hoverLine.setAttribute("visibility", "hidden");
       tooltip.hidden = true;
     });
+    root.addEventListener("click", (event) => {
+      const rect = root.getBoundingClientRect();
+      const px = ((event.clientX - rect.left) / rect.width) * width;
+      const offset = Math.min(total - 1, Math.max(0, ((px - pad.left) / plotW) * total));
+      const from = timelineStart + Math.floor(offset / windowSeconds) * windowSeconds;
+      openRange(from, from + windowSeconds, `${windowSeconds}-second window`);
+    });
+    if (state.panel?.kind === "range") {
+      const sel = svg("rect", { class: "selection", x: x(Math.max(timelineStart, state.panel.from)), y: pad.top, width: Math.max(2, x(Math.min(timelineStart + total, state.panel.to)) - x(Math.max(timelineStart, state.panel.from))), height: plotH });
+      root.insertBefore(sel, root.firstChild);
+    }
 
     host.append(root);
     renderStory({ x, pad, width, timelineStart, total });
@@ -1129,13 +1276,19 @@
       for (const c of chapters) {
         const x1 = x(Math.max(c.start, timelineStart));
         const x2 = x(Math.min(c.end, end));
-        root.append(svg("rect", { class: "chapter", x: x1, y, width: Math.max(1, x2 - x1), height: 18, rx: 4 }));
+        const chapterRect = svg("rect", { class: "chapter", x: x1, y, width: Math.max(1, x2 - x1), height: 18, rx: 4 });
+        chapterRect.addEventListener("click", () => openRange(Math.max(c.start, timelineStart), Math.min(c.end, end), c.title));
+        const chapterTitle = svg("title");
+        chapterTitle.textContent = `${c.title}: click to read its chat`;
+        chapterRect.append(chapterTitle);
+        root.append(chapterRect);
         const label = svg("text", { class: "chapter-label", x: x1 + 6, y: y + 13 });
         label.textContent = c.title;
         const clip = svg("clipPath", { id: `chap-${Math.round(c.start)}` });
         clip.append(svg("rect", { x: x1, y, width: Math.max(1, x2 - x1 - 4), height: 18 }));
         root.append(clip);
         label.setAttribute("clip-path", `url(#chap-${Math.round(c.start)})`);
+        label.style.pointerEvents = "none";
         root.append(label);
       }
       y += 22;
@@ -1144,7 +1297,9 @@
     for (const b of state.mood) {
       const x1 = x(b.start);
       const x2 = x(b.end);
-      const rect = svg("rect", { class: `mood-${b.mood || "none"}`, x: x1, y, width: Math.max(1, x2 - x1 + 0.5), height: 16 });
+      const selected = state.panel?.kind === "range" && state.panel.from === b.start && state.panel.to === b.end;
+      const rect = svg("rect", { class: `mood-cell mood-${b.mood || "none"}${selected ? " selected" : ""}`, x: x1, y, width: Math.max(1, x2 - x1 + 0.5), height: 16 });
+      rect.addEventListener("click", () => openRange(b.start, b.end, b.mood ? `mostly ${R.TYPES.find((t) => t.id === b.mood)?.label.toLowerCase()}` : "no clear reaction"));
       const title = svg("title");
       const label = b.mood ? R.TYPES.find((t) => t.id === b.mood)?.label : "No clear reaction";
       title.textContent = `${A.clock(b.start)}–${A.clock(b.end)} · ${label} · ${b.count} messages`;
@@ -1221,6 +1376,15 @@
     $(selector).addEventListener("change", runDetection);
   });
   $$("input[name=sort]").forEach((input) => input.addEventListener("change", renderMoments));
+  $("#message-close").addEventListener("click", () => {
+    state.panel = null;
+    if (state.search) {
+      state.search = null;
+      $("#chat-search").value = "";
+    }
+    renderMessagePanel();
+    renderTimeline();
+  });
   let searchTimer;
   $("#chat-search").addEventListener("input", () => {
     clearTimeout(searchTimer);
@@ -1228,6 +1392,7 @@
       if (!state.messages.length) return;
       const query = $("#chat-search").value;
       state.search = query.trim() ? I.searchChat(state.messages, query) : null;
+      state.panel = null;
       renderTimeline();
       renderSearch();
     }, 250);
@@ -1500,10 +1665,50 @@
     }
   }
 
+  /** Shows Connect / Fetch again / status in the clips block, and fetches automatically once per VOD. */
   function updateFetchClipsButton() {
+    const isTwitchVod = Boolean(state.result && state.platform === "twitch" && /^\d+$/.test(state.videoId || ""));
+    const connected = Boolean(state.twitch);
+    $("#fetch-clips").hidden = !(isTwitchVod && connected && state.clipsFetchedFor === state.videoId);
+    $("#clips-connect").hidden = !(isTwitchVod && !connected && !twitchUnsupported());
+    const status = $("#clips-status");
+    if (!state.result || state.clips.length || state.clipsFetching) return;
+    if (!isTwitchVod) {
+      if (!status.textContent) status.textContent = state.platform === "youtube" ? "Clip comparison works with Twitch VODs. For other sources, load a clips file." : "Add the Twitch VOD link on the setup screen to compare with its clips.";
+    } else if (!connected) {
+      status.textContent = twitchUnsupported() || "Connect Twitch to fetch this VOD’s clips automatically.";
+    } else if (state.clipsFetchedFor !== state.videoId) {
+      fetchClipsFromTwitch();
+    }
+  }
+
+  async function fetchClipsFromTwitch() {
+    if (!state.twitch || state.clipsFetching) return;
+    state.clipsFetching = true;
+    state.clipsFetchedFor = state.videoId;
     const button = $("#fetch-clips");
-    const ready = Boolean(state.twitch && state.result && state.platform === "twitch" && /^\d+$/.test(state.videoId || ""));
-    button.hidden = !ready;
+    button.disabled = true;
+    $("#clips-status").textContent = "Fetching clips from Twitch…";
+    try {
+      const result = await T.fetchVodClips(state.videoId, {
+        clientId: state.twitch.clientId || state.profile.twitch.clientId,
+        token: state.twitch.token,
+        onProgress: ({ clips }) => { $("#clips-status").textContent = `Fetching clips from Twitch… ${clips} found so far`; },
+      });
+      state.clipsFetching = false;
+      useClips(I.parseClips(result, state.videoId), "Twitch");
+      if (result.truncated) $("#clips-status").textContent += " (stopped after 2,000 of the channel’s clips)";
+    } catch (error) {
+      state.clipsFetching = false;
+      $("#clips-status").textContent = error.message;
+      if (error.reconnect) {
+        profileStore.clearTwitch();
+        state.twitch = null;
+        renderTwitch("Your Twitch connection expired. Click Connect to reconnect.");
+      }
+    }
+    button.disabled = false;
+    updateFetchClipsButton();
   }
 
   async function finishTwitchRedirect() {
@@ -1568,27 +1773,9 @@
     state.twitch = null;
     renderTwitch("Disconnected. To fully revoke access, remove Viewtopsy under Twitch Settings › Connections.");
   });
-  $("#fetch-clips").addEventListener("click", async () => {
-    const button = $("#fetch-clips");
-    button.disabled = true;
-    $("#clips-status").textContent = "Fetching clips from Twitch…";
-    try {
-      const result = await T.fetchVodClips(state.videoId, {
-        clientId: state.twitch.clientId || state.profile.twitch.clientId,
-        token: state.twitch.token,
-        onProgress: ({ clips }) => { $("#clips-status").textContent = `Fetching clips from Twitch… ${clips} found so far`; },
-      });
-      useClips(I.parseClips(result, state.videoId), "Twitch");
-      if (result.truncated) $("#clips-status").textContent += " (stopped after 2,000 of the channel’s clips)";
-    } catch (error) {
-      $("#clips-status").textContent = error.message;
-      if (error.reconnect) {
-        profileStore.clearTwitch();
-        state.twitch = null;
-        renderTwitch("Your Twitch connection expired. Click Connect to reconnect.");
-      }
-    }
-    button.disabled = false;
+  $("#fetch-clips").addEventListener("click", () => {
+    state.clips = [];
+    fetchClipsFromTwitch();
   });
 
   try {

@@ -92,11 +92,21 @@
           <div id="timeline-tooltip" class="timeline-tooltip" hidden></div>
           <p class="chart-key hint" id="chart-key"></p>
           <p id="chat-overall" class="chat-overall"></p>
-          <div id="search-results" class="search-results" hidden>
-            <p id="search-summary"></p>
-            <ol id="search-list"></ol>
+          <p class="hint chart-hint">Click the chart or the mood strip to read the messages from that moment.</p>
+          <div id="message-panel" class="search-results" hidden>
+            <div class="message-panel-head">
+              <p id="message-summary"></p>
+              <button id="message-close" class="text-button" type="button">Close</button>
+            </div>
+            <ol id="message-list"></ol>
           </div>
         </div>
+
+        <section id="overview" class="panel overview" hidden aria-labelledby="overview-title">
+          <h3 id="overview-title">Stream overview</h3>
+          <div id="overview-stats" class="overview-stats"></div>
+          <div id="overview-details" class="overview-details"></div>
+        </section>
 
         <div class="panel segments-panel" id="segments-panel" hidden>
           <div class="timeline-head">
@@ -134,14 +144,21 @@
             <p id="ai-lag" class="hint"></p>
           </div>
           <div class="insight-block">
-            <h3>Compare with existing clips <span class="optional">optional</span></h3>
-            <p class="hint">Add the VOD’s Twitch clips to see which moments are already clipped and which nobody has clipped yet. Get them with <code>stream-moments fetch-clips</code> (see README).</p>
-            <label class="upload-zone compact" id="clips-zone" for="clips-file">
-              <input id="clips-file" type="file" accept=".json,application/json" />
-              <span><strong>Drop a clips file here</strong> or click to choose</span>
-            </label>
-            <button id="fetch-clips" class="secondary-button small" type="button" hidden>Fetch clips from Twitch <span class="beta-tag">Beta</span></button>
+            <h3>Compare with existing clips <span class="beta-tag">Beta</span></h3>
+            <p class="hint">See which moments viewers already clipped and which nobody has. Clips are fetched from Twitch automatically for Twitch VODs once you connect Twitch.</p>
+            <p id="clips-connect" class="clips-connect" hidden>
+              <button type="button" class="secondary-button small" data-go="profile">Connect Twitch in Profile</button>
+            </p>
+            <button id="fetch-clips" class="secondary-button small" type="button" hidden>Fetch clips again</button>
             <p id="clips-status" class="hint" aria-live="polite"></p>
+            <details class="clips-file">
+              <summary>Or load a clips file</summary>
+              <p class="hint">From <code>stream-moments fetch-clips</code> (see README) or the Twitch API.</p>
+              <label class="upload-zone compact" id="clips-zone" for="clips-file">
+                <input id="clips-file" type="file" accept=".json,application/json" />
+                <span><strong>Drop a clips file here</strong> or click to choose</span>
+              </label>
+            </details>
           </div>
         </div>
 

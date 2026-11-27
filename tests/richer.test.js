@@ -107,3 +107,37 @@ test("editor markers span the suggested clip range", () => {
   assert.match(xml, /<in>35700<\/in>\s*<out>37500<\/out>/);
   assert.match(xml, /clip score 77/);
 });
+
+test("stream overview: hype time, clip requests with and without spikes, new-chatter waves, money", () => {
+  const msgs = sorted([
+    ...steady(0, 2400, 3),
+    // a hype wave at 20:00 from new people, two of them asking for a clip
+    ...Array.from({ length: 80 }, (_, i) => msg(1200 + i * 0.5, i < 2 ? "CLIP IT" : "NO WAY", `wave${i}`, { bits: i === 5 ? 300 : 0 })),
+    // chat asks for a clip at 30:00 without spiking
+    msg(1800, "clip that", "reg1"), msg(1805, "!clip", "reg2"),
+    // 40 new people arrive during minute 35 (in steady chat that's also a small spike)
+    ...Array.from({ length: 40 }, (_, i) => msg(2100 + i * 1.4, "hi", `raider${i}`)),
+    msg(2300, "great stream", "fan", { paid: true }),
+  ]);
+  const result = A.findMoments(msgs);
+  const seen = I.firstSeen(msgs);
+  const moments = result.moments.map((m) => ({ ...m, signals: I.momentSignals(m, msgs, result, { seen }) }));
+  const o = I.streamOverview(msgs, result, moments);
+
+  assert.equal(o.messages, msgs.length);
+  assert.ok(o.hype.seconds >= 30 && o.hype.seconds <= 120);
+  assert.equal(o.hype.longest.duration, Math.max(...moments.map((m) => m.signals.hype.duration)));
+
+  assert.equal(o.clipRequests.total, 4);
+  assert.equal(o.clipRequests.groups.length, 2);
+  assert.equal(o.clipRequests.groups[0].momentRank, 1);
+  assert.deepEqual(o.clipRequests.withoutSpike.map((g) => g.start), [1800]);
+
+  const waves = o.newChatters.waves.map((w) => [w.start, w.momentRank]);
+  assert.deepEqual(waves.find((w) => w[0] === 1200), [1200, 1]);
+  assert.ok(waves.some((w) => w[0] === 2100 && w[1] === 2), JSON.stringify(waves));
+
+  assert.equal(o.audience.bits, 300);
+  assert.equal(o.audience.paid, 1);
+  assert.equal(o.audience.moneyMoments[0].bits, 300);
+});

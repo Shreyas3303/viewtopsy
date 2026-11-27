@@ -498,6 +498,103 @@ ${markers}
   }
 
   // ---------------------------------------------------------------------------
+  // Stream-wide overview
+  // ---------------------------------------------------------------------------
+
+  /** Groups timestamps that are within `gap` seconds of each other. */
+  function cluster(times, gap) {
+    const groups = [];
+    for (const t of [...times].sort((a, b) => a - b)) {
+      const last = groups[groups.length - 1];
+      if (last && t - last.end <= gap) {
+        last.end = t;
+        last.count += 1;
+      } else {
+        groups.push({ start: t, end: t, count: 1 });
+      }
+    }
+    return groups;
+  }
+
+  /**
+   * The whole stream at a glance.
+   * @param moments enriched moments (need .signals and .windowStart/.rank)
+   */
+  function streamOverview(messages, result, moments = []) {
+    if (!messages.length) return null;
+    const first = messages[0].timestamp;
+    const last = messages[messages.length - 1].timestamp;
+    const minutes = Math.max(1, (last - first) / 60);
+    const w = result.moments[0]?.windowSeconds || 15;
+
+    // Hype: union of every moment's hype span.
+    const spans = moments.filter((m) => m.signals).map((m) => [m.signals.hype.start, m.signals.hype.end]).sort((a, b) => a[0] - b[0]);
+    let hypeSeconds = 0;
+    let cursor = -Infinity;
+    for (const [s, e] of spans) {
+      const from = Math.max(s, cursor);
+      if (e > from) hypeSeconds += e - from;
+      cursor = Math.max(cursor, e);
+    }
+    const longest = moments.filter((m) => m.signals).sort((a, b) => b.signals.hype.duration - a.signals.hype.duration)[0] || null;
+    const inMoment = (t) => moments.find((m) => m.signals && t >= m.signals.hype.start - 20 && t < m.signals.hype.end + 20) || null;
+
+    // Clip requests, grouped; flag the ones where chat didn't spike.
+    const requestTimes = messages.filter((m) => CLIP_REQUEST.test(m.text)).map((m) => m.timestamp);
+    const requestGroups = cluster(requestTimes, 30).map((g) => {
+      const moment = inMoment(g.start);
+      return { ...g, momentKey: moment ? moment.windowStart : null, momentRank: moment ? moment.rank : null };
+    });
+
+    // New chatters: first messages per minute, after the first 10 minutes.
+    const seen = firstSeen(messages);
+    const perMinute = new Map();
+    for (const t of seen.values()) {
+      if (t - first < 600) continue;
+      const minute = Math.floor(t / 60) * 60;
+      perMinute.set(minute, (perMinute.get(minute) || 0) + 1);
+    }
+    const arrivals = [...perMinute.values()];
+    // Typical arrivals per minute across every minute after the first ten
+    // (minutes with no newcomers count as zero).
+    const countedMinutes = Math.max(1, (last - Math.max(first + 600, first)) / 60);
+    const typical = Math.round(arrivals.reduce((a, b) => a + b, 0) / countedMinutes);
+    const newChatterWaves = [...perMinute]
+      .filter(([, n]) => n >= Math.max(5, typical * 1.8))
+      .sort((a, b) => b[1] - a[1])
+      .slice(0, 4)
+      .map(([start, count]) => {
+        const moment = inMoment(start + 30);
+        return { start, end: start + 60, count, typical, momentKey: moment ? moment.windowStart : null, momentRank: moment ? moment.rank : null };
+      })
+      .sort((a, b) => a.start - b.start);
+
+    const subs = messages.filter((m) => m.sub).length;
+    const paid = messages.filter((m) => m.paid);
+    const bits = messages.filter((m) => m.bits > 0);
+    const moneyGroups = cluster([...paid.map((m) => m.timestamp), ...bits.map((m) => m.timestamp)], 60)
+      .map((g) => ({ ...g, bits: bits.filter((m) => m.timestamp >= g.start && m.timestamp <= g.end).reduce((sum, m) => sum + m.bits, 0) }))
+      .sort((a, b) => b.bits - a.bits || b.count - a.count)
+      .slice(0, 3);
+
+    return {
+      duration: last - first,
+      messages: messages.length,
+      chatters: seen.size,
+      perMinute: Number((messages.length / minutes).toFixed(1)),
+      peakPerMinute: Math.round((Math.max(0, ...result.timeline) * 60) / w),
+      hype: {
+        seconds: Math.round(hypeSeconds),
+        share: Math.min(1, hypeSeconds / Math.max(1, last - first)),
+        longest: longest ? { duration: longest.signals.hype.duration, start: longest.signals.hype.start, momentKey: longest.windowStart, momentRank: longest.rank } : null,
+      },
+      clipRequests: { total: requestTimes.length, groups: requestGroups, withoutSpike: requestGroups.filter((g) => g.momentKey == null && g.count >= 2) },
+      newChatters: { total: seen.size, afterTenMinutes: arrivals.reduce((a, b) => a + b, 0), typicalPerMinute: typical, waves: newChatterWaves },
+      audience: { subShare: subs / messages.length, bits: bits.reduce((sum, m) => sum + m.bits, 0), paid: paid.length, moneyMoments: moneyGroups },
+    };
+  }
+
+  // ---------------------------------------------------------------------------
   // Search
   // ---------------------------------------------------------------------------
 
@@ -530,5 +627,6 @@ ${markers}
     moodBucket,
     moodTimeline,
     searchChat,
+    streamOverview,
   };
 });
