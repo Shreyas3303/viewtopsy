@@ -320,6 +320,7 @@ button:disabled { cursor: not-allowed; }
 .explanation .meta { display: flex; flex-wrap: wrap; gap: 0.4rem; }
 .explanation .tag { font-size: 0.72rem; font-weight: 700; padding: 0.1rem 0.5rem; border-radius: 99px; background: #fff; border: 1px solid var(--line); }
 .explanation .tag.low { color: #9a4a00; border-color: #f0c08a; }
+.explanation .tag.muted-tag { color: var(--muted); font-weight: 600; }
 .explanation.error { border-left-color: #b23b1e; background: #fde8e2; }
 .explanation.loading { color: var(--muted); }
 

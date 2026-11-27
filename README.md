@@ -36,7 +36,11 @@ The sample is a made-up 2-hour stream with nine planted events (a raid, a jump s
 - **Sensitivity** (Fewer / Balanced / More) to trade fewer, bigger moments for more candidates. Advanced settings let you change the window length and thresholds.
 - **Reaction reading** for every moment: laughter, hype, shock, tension, sad, wholesome, disapproval, confusion, chat voting, support/alerts. It understands emotes (KEKW, monkaS, Pog, W/L…), channel emotes by their ending (`cohhLUL`, `kaicenatW`) and stretched words (LMAOOOO).
 - **Frames from your video** (optional): add the video file and each moment gets a strip of 6 frames from the 20 seconds before chat spiked, since chat reacts a few seconds after the cause. The video is read in your browser and never uploaded.
-- **AI explanations** (optional): with your own Anthropic API key, each moment's frames, chat and reaction profile go to Claude, which returns what happened, why chat reacted, the likely trigger (gameplay, streamer, guest, alert, chat itself…), and a confidence level. Only moments you explain are sent. The model can't hear audio yet, so moments caused by something said get low confidence.
+- **AI explanations** (optional): paste an API key and each moment's frames, chat and reaction profile go to a vision model, which returns what happened, why chat reacted, the likely trigger (gameplay, streamer, guest, alert, chat itself…), and a confidence level. Only moments you explain are sent. The model can't hear audio yet, so moments caused by something said get low confidence.
+  - **Free option:** a Google Gemini key from [Google AI Studio](https://aistudio.google.com/apikey) (free tier, no card needed). Viewtopsy asks Google which models your key can use, picks the newest stable Flash model, and moves to the next one if a model has no free quota on your key. Note that Google may use free-tier requests to improve its products.
+  - An Anthropic key (`sk-ant-…`) works too and uses Claude.
+  - The key type is detected automatically. You can still pick a specific model in the menu.
+  - Explanations work when you open `frontend/index.html` yourself. Hosted previews that block outside connections can't reach the AI.
 - **Stars and notes** so you can shortlist moments and name your clips.
 - **Exports**: copy as YouTube chapters, or download CSV / JSON. If you starred anything, only starred moments are exported.
 
@@ -84,7 +88,7 @@ frontend/            Browser app (no build step)
   analysis.js        Detection, parsing and export (shared with tests)
   reactions.js       Emote-aware reaction reading
   frames.js          Grabs frames from a local video file
-  explain.js         Builds the Claude request and reads its answer
+  explain.js         Gemini/Claude requests, model choice and reading answers
   sample.js          Generates the demo stream
 src/stream_moments/  Python package and CLI
 tests/               Python (pytest) and JavaScript (node --test) tests

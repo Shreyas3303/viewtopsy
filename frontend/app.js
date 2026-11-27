@@ -8,7 +8,7 @@
   const X = window.ViewtopsyExplain;
   const Sample = window.ViewtopsySample;
   const SVG_NS = "http://www.w3.org/2000/svg";
-  const KEY_STORAGE = "viewtopsy.anthropicKey";
+  const KEY_STORAGE = "viewtopsy.aiKey";
 
   const $ = (selector, scope = document) => scope.querySelector(selector);
   const $$ = (selector, scope = document) => [...scope.querySelectorAll(selector)];
@@ -28,6 +28,7 @@
     frames: new Map(), // `${key}@${offset}` -> [{time, dataUrl}] | "loading" | Error
     explanations: new Map(), // key -> {status: "loading"|"done"|"error", data, error}
     apiKey: "",
+    explainer: null, // one per key and model choice; remembers the Gemini model that worked
   };
 
   // ---------------------------------------------------------------------------
@@ -516,9 +517,40 @@
       button.textContent = explanation?.status === "done" ? "Re-explain" : "Explain";
     }
     const status = $("#ai-status");
+    if (state.aiBusy) return;
     if (!state.grabber) status.textContent = "Add the video file to enable explanations.";
     else if (!hasKey) status.textContent = "Add your API key to enable explanations.";
-    else status.textContent = `${readyCount} moment${readyCount === 1 ? "" : "s"} ready to explain.`;
+    else status.textContent = `${readyCount} moment${readyCount === 1 ? "" : "s"} ready to explain${providerNote()}.`;
+  }
+
+  function providerNote() {
+    const ex = state.explainer;
+    if (!ex) return "";
+    const name = X.PROVIDERS[ex.provider]?.label || "";
+    return ex.model ? ` with ${name} (${ex.model})` : ` with ${name}`;
+  }
+
+  function getExplainer() {
+    const model = $("#ai-model").value || "auto";
+    const ex = state.explainer;
+    if (!ex || ex.key !== state.apiKey || ex.choice !== model) {
+      state.explainer = Object.assign(X.createExplainer({ apiKey: state.apiKey, model }), { key: state.apiKey, choice: model });
+    }
+    return state.explainer;
+  }
+
+  /** Fills the model menu for the provider the key belongs to. */
+  function refreshModelMenu() {
+    const select = $("#ai-model");
+    const previous = select.value;
+    const provider = X.detectProvider(state.apiKey);
+    select.replaceChildren(el("option", { value: "auto", textContent: provider === "anthropic" ? "Automatic (Claude Sonnet)" : "Automatic (best free Gemini model)" }));
+    if (provider === "anthropic") {
+      for (const m of X.MODELS) select.append(el("option", { value: m.id, textContent: m.label }));
+    } else if (provider === "gemini") {
+      for (const id of X.GEMINI_FALLBACKS) select.append(el("option", { value: id, textContent: id }));
+    }
+    select.value = [...select.options].some((o) => o.value === previous) ? previous : "auto";
   }
 
   async function explainMoment(moment) {
@@ -532,7 +564,7 @@
     const chat = messagesBetween(moment.peakTime - F.LOOK_BACK, moment.windowEnd + 5);
     const step = Math.max(1, Math.ceil(chat.length / 80)); // spread the sample across the whole spike
     try {
-      const data = await X.explain(
+      const data = await getExplainer().explain(
         {
           moment: { ...moment, peakTime: moment.peakTime + windowSeconds / 2 },
           frames,
@@ -540,11 +572,10 @@
           reactions: state.reactions.get(key),
           context: { title: state.info.title, channel: state.info.channel },
         },
-        { apiKey: state.apiKey, model: $("#ai-model").value },
       );
       state.explanations.set(key, { status: "done", data });
     } catch (error) {
-      state.explanations.set(key, { status: "error", error: error.message });
+      state.explanations.set(key, { status: "error", error: error.message, fatal: Boolean(error.fatal) });
     }
     paintExplanation(moment);
     updateAiControls();
@@ -557,18 +588,20 @@
       return;
     }
     $("#explain-all").disabled = true;
+    state.aiBusy = true;
+    let stopMessage = "";
     for (const [i, moment] of todo.entries()) {
-      $("#ai-status").textContent = `Explaining ${i + 1} of ${todo.length}…`;
+      $("#ai-status").textContent = `Explaining ${i + 1} of ${todo.length}${providerNote()}…`;
       await explainMoment(moment);
-      if (state.explanations.get(moment.windowStart)?.status === "error") {
-        const message = state.explanations.get(moment.windowStart).error;
-        if (/key|rate|reach|Model not found/i.test(message)) {
-          $("#ai-status").textContent = message;
-          break;
-        }
+      const result = state.explanations.get(moment.windowStart);
+      if (result?.status === "error" && result.fatal) {
+        stopMessage = result.error;
+        break;
       }
     }
+    state.aiBusy = false;
     updateAiControls();
+    if (stopMessage) $("#ai-status").textContent = `Stopped: ${stopMessage}`;
   }
 
   function paintExplanation(moment) {
@@ -598,14 +631,15 @@
       el("span", { className: "tag", textContent: d.triggerLabel }),
       el("span", { className: `tag ${d.confidence}`, textContent: `${d.confidence} confidence` }),
       d.causeTime ? el("span", { className: "tag", textContent: `cause ≈ ${d.causeTime}` }) : null,
+      d.model ? el("span", { className: "tag muted-tag", textContent: d.model }) : null,
     ]);
-    box.append(
+    box.append(...[
       el("h4", { textContent: d.title || "What happened" }),
       meta,
       d.whatHappened ? el("p", { textContent: d.whatHappened }) : null,
       d.whyChatReacted ? el("p", {}, [el("b", { textContent: "Why chat reacted: " }), d.whyChatReacted]) : null,
       d.evidence.length ? el("ul", {}, d.evidence.map((e) => el("li", { textContent: e }))) : null,
-    );
+    ].filter(Boolean));
     // Offer the AI title as the note if the person hasn't written one.
     const note = $(".note-input", card);
     if (!note.value && d.title) note.placeholder = `Add a note or clip title… (suggested: ${d.title})`;
@@ -777,16 +811,20 @@
   }));
 
   // AI settings
-  for (const model of X.MODELS) $("#ai-model").append(el("option", { value: model.id, textContent: model.label }));
   const savedKey = storage("get");
   if (savedKey) {
     state.apiKey = savedKey;
     $("#api-key").value = savedKey;
     $("#remember-key").checked = true;
   }
+  refreshModelMenu();
   $("#api-key").addEventListener("input", () => {
     state.apiKey = $("#api-key").value.trim();
     if ($("#remember-key").checked) storage("set", state.apiKey);
+    refreshModelMenu();
+    if (state.result) updateAiControls();
+  });
+  $("#ai-model").addEventListener("change", () => {
     if (state.result) updateAiControls();
   });
   $("#remember-key").addEventListener("change", () => {

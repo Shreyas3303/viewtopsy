@@ -115,23 +115,119 @@ test("reads the model's JSON even with text around it, and cleans bad values", (
   assert.throws(() => X.parseResponse(reply("no json here")), /expected format/);
 });
 
-test("calls the API with the browser headers and maps errors to readable messages", async () => {
+test("calls the Claude API with the browser headers and maps errors to readable messages", async () => {
   let seen;
   const ok = async (url, init) => {
     seen = { url, init };
     return { ok: true, status: 200, json: async () => ({ content: [{ type: "text", text: '{"title":"t","trigger":"streamer","confidence":"medium","evidence":[]}' }] }) };
   };
-  const result = await X.explain(input, { apiKey: "sk-test", model: "claude-haiku-5-5", fetchImpl: ok });
+  const result = await X.explain(input, { apiKey: "sk-ant-test", model: "claude-haiku-5-5", fetchImpl: ok });
   assert.equal(result.trigger, "streamer");
+  assert.equal(result.provider, "anthropic");
   assert.equal(seen.url, "https://api.anthropic.com/v1/messages");
-  assert.equal(seen.init.headers["x-api-key"], "sk-test");
+  assert.equal(seen.init.headers["x-api-key"], "sk-ant-test");
   assert.equal(seen.init.headers["anthropic-dangerous-direct-browser-access"], "true");
   assert.equal(JSON.parse(seen.init.body).model, "claude-haiku-5-5");
 
-  const failing = (status) => async () => ({ ok: false, status, json: async () => ({ error: { message: "nope" } }) });
-  await assert.rejects(X.explain(input, { apiKey: "k", fetchImpl: failing(401) }), /key was rejected/);
-  await assert.rejects(X.explain(input, { apiKey: "k", fetchImpl: failing(429) }), /Rate limited/);
-  await assert.rejects(X.explain(input, { apiKey: "k", fetchImpl: failing(404) }), /Model not found/);
+  const failing = (status, message = "nope") => async () => ({ ok: false, status, json: async () => ({ error: { message } }) });
+  await assert.rejects(X.explain(input, { apiKey: "sk-ant-k", fetchImpl: failing(401) }), /key was rejected/);
+  await assert.rejects(X.explain(input, { apiKey: "sk-ant-k", fetchImpl: failing(429) }), /Rate limited/);
+  await assert.rejects(X.explain(input, { apiKey: "sk-ant-k", fetchImpl: failing(404) }), /Model not found/);
   await assert.rejects(X.explain(input, { apiKey: "", fetchImpl: ok }), /API key/);
-  await assert.rejects(X.explain({ ...input, frames: [] }, { apiKey: "k", fetchImpl: ok }), /No frames/);
+  await assert.rejects(X.explain({ ...input, frames: [] }, { apiKey: "sk-ant-k", fetchImpl: ok }), /No frames/);
+});
+
+// ---------------------------------------------------------------------------
+// Gemini
+// ---------------------------------------------------------------------------
+
+test("works out the provider from the key", () => {
+  assert.equal(X.detectProvider("AIzaSyExample"), "gemini");
+  assert.equal(X.detectProvider("sk-ant-api03-x"), "anthropic");
+  assert.equal(X.detectProvider("something-else"), "gemini");
+  assert.equal(X.detectProvider(""), null);
+});
+
+test("ranks Gemini models: newest stable Flash first, skips non-vision kinds", () => {
+  const models = [
+    "gemini-2.5-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3-flash-preview",
+    "gemini-3.1-flash-image", "gemini-3.1-flash-tts-preview", "gemini-3.1-flash-live-preview", "gemini-3.1-pro-preview",
+    "gemini-embedding-001", "gemini-3.5-transcribe",
+  ].map((id) => ({ name: `models/${id}`, supportedGenerationMethods: ["generateContent"] }));
+  models.push({ name: "models/gemini-9.9-flash", supportedGenerationMethods: ["embedContent"] });
+  assert.deepEqual(X.rankGeminiModels(models), [
+    "gemini-3.7-flash", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-3-flash-preview",
+  ]);
+});
+
+test("builds a Gemini request with inline JPEG frames and JSON output", () => {
+  const body = X.buildGeminiRequest(input);
+  const parts = body.contents[0].parts;
+  assert.deepEqual(parts.filter((p) => p.inline_data).map((p) => p.inline_data.data), ["AAAA", "BBBB"]);
+  assert.equal(parts.find((p) => p.inline_data).inline_data.mime_type, "image/jpeg");
+  assert.equal(body.generationConfig.responseMimeType, "application/json");
+  assert.match(parts.map((p) => p.text || "").join("\n"), /\[1:06:41\] amy: LMAOOO/);
+});
+
+const geminiReply = (text, extra = {}) => ({ candidates: [{ content: { parts: [{ text }] }, finishReason: "STOP", ...extra }] });
+
+test("reads Gemini replies and reports blocked or cut-off answers", () => {
+  const ok = X.parseGeminiResponse(geminiReply('{"title":"Big clutch","trigger":"gameplay","confidence":"high","evidence":["x"]}'));
+  assert.equal(ok.title, "Big clutch");
+  assert.equal(ok.triggerLabel, "Gameplay");
+  const withThought = X.parseGeminiResponse({ candidates: [{ content: { parts: [{ text: "thinking {not json", thought: true }, { text: '{"title":"T"}' }] } }] });
+  assert.equal(withThought.title, "T");
+  assert.throws(() => X.parseGeminiResponse({ promptFeedback: { blockReason: "SAFETY" } }), /declined.*SAFETY/);
+  assert.throws(() => X.parseGeminiResponse({ candidates: [{ content: { parts: [] }, finishReason: "MAX_TOKENS" }] }), /stopped early/);
+});
+
+/** A fake Gemini API: lists models, and some models have no free quota. */
+function fakeGemini({ models, noFreeQuota = [], listFails = false }) {
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    calls.push({ url, init });
+    const json = (status, body) => ({ ok: status < 400, status, json: async () => body });
+    if (url.includes("/models?")) {
+      if (listFails) return json(500, { error: { message: "boom" } });
+      return json(200, { models: models.map((id) => ({ name: `models/${id}`, supportedGenerationMethods: ["generateContent"] })) });
+    }
+    const model = decodeURIComponent(url.match(/models\/([^:]+):generateContent/)[1]);
+    if (init.headers["x-goog-api-key"] === "AIzaBAD") return json(400, { error: { message: "API key not valid. Please pass a valid API key." } });
+    if (noFreeQuota.includes(model)) return json(429, { error: { message: `Quota exceeded for metric: generate_content_free_tier_requests, limit: 0, model: ${model}` } });
+    if (!models.includes(model)) return json(404, { error: { message: `models/${model} is not found` } });
+    return json(200, geminiReply(`{"title":"from ${model}","trigger":"gameplay","confidence":"medium","evidence":[]}`));
+  };
+  return { fetchImpl, calls };
+}
+
+test("Gemini: picks the best model automatically and remembers it", async () => {
+  const api = fakeGemini({ models: ["gemini-2.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-image"] });
+  const ex = X.createExplainer({ apiKey: "AIzaTest", fetchImpl: api.fetchImpl });
+  assert.equal(ex.provider, "gemini");
+  const first = await ex.explain(input);
+  assert.equal(first.model, "gemini-3.6-flash");
+  assert.equal(first.title, "from gemini-3.6-flash");
+  assert.equal(api.calls[0].init.headers["x-goog-api-key"], "AIzaTest");
+  await ex.explain(input);
+  assert.equal(api.calls.filter((c) => c.url.includes("/models?")).length, 1); // listed once
+});
+
+test("Gemini: moves to the next model when one has no free quota", async () => {
+  const api = fakeGemini({ models: ["gemini-3.7-flash", "gemini-3.6-flash"], noFreeQuota: ["gemini-3.7-flash"] });
+  const ex = X.createExplainer({ apiKey: "AIzaTest", fetchImpl: api.fetchImpl });
+  const result = await ex.explain(input);
+  assert.equal(result.model, "gemini-3.6-flash");
+  assert.equal(ex.model, "gemini-3.6-flash");
+});
+
+test("Gemini: uses built-in model names if the list can't be fetched", async () => {
+  const api = fakeGemini({ models: ["gemini-2.5-flash"], listFails: true });
+  const result = await X.createExplainer({ apiKey: "AIzaTest", fetchImpl: api.fetchImpl }).explain(input);
+  assert.equal(result.model, "gemini-2.5-flash"); // walked the fallback list past models that 404
+});
+
+test("Gemini: a bad key or an explicit missing model gives a clear error", async () => {
+  const api = fakeGemini({ models: ["gemini-3.6-flash"] });
+  await assert.rejects(X.createExplainer({ apiKey: "AIzaBAD", fetchImpl: api.fetchImpl }).explain(input), /key was rejected/);
+  await assert.rejects(X.createExplainer({ apiKey: "AIzaTest", model: "gemini-0-flash", fetchImpl: api.fetchImpl }).explain(input), /Model not found/);
 });
