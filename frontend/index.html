@@ -3,69 +3,176 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="description" content="Find high-engagement moments in Twitch and YouTube stream chat." />
-    <title>Stream Moments</title>
+    <meta name="description" content="Find the moments your chat loved. Viewtopsy ranks Twitch and YouTube VOD highlights from chat activity." />
+    <title>Viewtopsy · Find the moments your chat loved</title>
     <link rel="stylesheet" href="styles.css" />
   </head>
   <body>
     <header class="site-header">
-      <a class="brand" href="#top" aria-label="Stream Moments home"><span class="brand-mark">◆</span> Stream Moments</a>
-      <span class="header-note">Local-first stream highlight finder</span>
+      <a class="brand" href="#top" aria-label="Viewtopsy home"><span class="brand-mark" aria-hidden="true">◆</span> Viewtopsy</a>
+      <span class="header-note">Runs in your browser · nothing is uploaded</span>
     </header>
+
     <main id="top" class="shell">
-      <section class="hero">
-        <p class="eyebrow">TWITCH + YOUTUBE</p>
-        <h1>Find the moments<br /><em>your chat loved.</em></h1>
-        <p class="lede">Upload a chat export, tune the signal, and get a clean, ranked highlight timeline. Processing happens in this browser.</p>
+      <!-- ============ Setup ============ -->
+      <section id="setup" class="setup">
+        <div class="hero">
+          <p class="eyebrow">Twitch + YouTube VODs</p>
+          <h1>Find the moments<br /><em>your chat loved.</em></h1>
+          <p class="lede">Drop in a chat replay and Viewtopsy shows you where chat went wild, ranked and ready to clip.</p>
+        </div>
+
+        <form id="setup-form" class="panel setup-form" novalidate>
+          <div class="step">
+            <span class="step-number" aria-hidden="true">1</span>
+            <div class="step-body">
+              <h2>Add a chat replay</h2>
+              <label class="upload-zone" id="upload-zone" for="chat-file">
+                <input id="chat-file" type="file" accept=".json,.jsonl,.csv,application/json,text/csv" />
+                <span class="upload-icon" aria-hidden="true">↑</span>
+                <span><strong>Drop a chat file here</strong> or click to choose one</span>
+                <small>JSON or CSV. Works with TwitchDownloader, chat-downloader and simple exports.</small>
+              </label>
+              <div class="or-row"><span>or</span></div>
+              <button id="sample-button" class="secondary-button wide" type="button">Try it with a sample stream</button>
+              <p id="file-status" class="file-status" aria-live="polite"></p>
+            </div>
+          </div>
+
+          <div class="step">
+            <span class="step-number" aria-hidden="true">2</span>
+            <div class="step-body">
+              <h2>Link the video <span class="optional">optional</span></h2>
+              <label class="field">VOD link or ID
+                <input id="video-input" placeholder="https://www.twitch.tv/videos/123… or a YouTube link" maxlength="300" autocomplete="off" />
+              </label>
+              <div class="platform-row" role="radiogroup" aria-label="Platform">
+                <label><input type="radio" name="platform" value="twitch" checked /> Twitch</label>
+                <label><input type="radio" name="platform" value="youtube" /> YouTube</label>
+                <span id="platform-hint" class="hint"></span>
+              </div>
+              <p class="hint">Adds “Watch” links that open the VOD at each moment.</p>
+            </div>
+          </div>
+
+          <button id="analyze-button" class="primary-button" type="submit" disabled>Find moments <span aria-hidden="true">→</span></button>
+        </form>
       </section>
 
-      <section class="workspace" aria-label="Stream analysis workspace">
-        <form id="analysis-form" class="controls">
-          <div class="control-grid">
-            <label>Platform
-              <select id="platform" name="platform"><option value="twitch">Twitch</option><option value="youtube">YouTube</option></select>
-            </label>
-            <label>VOD / video ID
-              <input id="video-id" name="videoId" placeholder="e.g. 123456789 or dQw4w9WgXcQ" maxlength="100" />
-            </label>
+      <!-- ============ Results ============ -->
+      <section id="results" class="results" hidden aria-labelledby="result-title">
+        <div class="results-head">
+          <div>
+            <p class="eyebrow" id="source-label">Analysis</p>
+            <h2 id="result-title">Moments</h2>
           </div>
-          <label class="upload-zone" id="upload-zone" for="chat-file">
-            <input id="chat-file" type="file" accept=".json,.csv,application/json,text/csv" />
-            <span class="upload-icon">↑</span>
-            <span><strong>Drop chat export here</strong> or choose a JSON / CSV file</span>
-            <small>Supports generic exports and TwitchDownloader JSON.</small>
-          </label>
-          <p id="file-status" class="file-status" aria-live="polite">No file selected</p>
-          <details class="tuning"><summary>Detection settings</summary>
-            <div class="control-grid tuning-grid">
-              <label>Window seconds<input id="window-seconds" type="number" value="15" min="1" max="300" /></label>
-              <label>Minimum messages<input id="min-messages" type="number" value="5" min="1" max="10000" /></label>
-              <label>Z-score threshold<input id="z-threshold" type="number" value="2" min="0" max="20" step="0.1" /></label>
+          <button id="new-analysis" class="text-button" type="button">← Analyze another stream</button>
+        </div>
+
+        <div class="metrics">
+          <article><strong id="metric-messages">0</strong><span>messages</span></article>
+          <article><strong id="metric-duration">0:00</strong><span>stream length</span></article>
+          <article><strong id="metric-chatters">0</strong><span>chatters</span></article>
+          <article><strong id="metric-moments">0</strong><span>moments found</span></article>
+        </div>
+
+        <div class="panel timeline-panel">
+          <div class="timeline-head">
+            <h3>Chat activity</h3>
+            <span class="hint">Click a marker to jump to that moment</span>
+          </div>
+          <div id="timeline" class="timeline" role="img" aria-label="Chat activity over the stream"></div>
+          <div id="timeline-tooltip" class="timeline-tooltip" hidden></div>
+        </div>
+
+        <div class="toolbar panel">
+          <div class="tool">
+            <span class="tool-label" id="sensitivity-label">Sensitivity</span>
+            <div class="segmented" role="radiogroup" aria-labelledby="sensitivity-label">
+              <label><input type="radio" name="sensitivity" value="low" /><span>Fewer</span></label>
+              <label><input type="radio" name="sensitivity" value="medium" checked /><span>Balanced</span></label>
+              <label><input type="radio" name="sensitivity" value="high" /><span>More</span></label>
+            </div>
+          </div>
+          <div class="tool">
+            <span class="tool-label" id="sort-label">Order</span>
+            <div class="segmented" role="radiogroup" aria-labelledby="sort-label">
+              <label><input type="radio" name="sort" value="rank" checked /><span>Biggest first</span></label>
+              <label><input type="radio" name="sort" value="time" /><span>By time</span></label>
+            </div>
+          </div>
+          <details class="tool advanced">
+            <summary>Advanced</summary>
+            <div class="advanced-grid">
+              <label class="field">Window length
+                <select id="window-seconds">
+                  <option value="10">10 seconds</option>
+                  <option value="15" selected>15 seconds</option>
+                  <option value="30">30 seconds</option>
+                  <option value="60">60 seconds</option>
+                </select>
+              </label>
+              <label class="field">Min. messages per window
+                <input id="min-messages" type="number" value="5" min="1" max="10000" />
+              </label>
+              <label class="field">Custom threshold (z-score)
+                <input id="z-threshold" type="number" min="0" max="20" step="0.1" placeholder="use sensitivity" />
+              </label>
             </div>
           </details>
-          <button class="primary-button" type="submit">Analyze chat <span>→</span></button>
-        </form>
+        </div>
 
-        <aside class="how-it-works">
-          <p class="eyebrow">HOW IT WORKS</p>
-          <ol><li><span>01</span> Add a chat replay export.</li><li><span>02</span> We measure message bursts over time.</li><li><span>03</span> Review and export the strongest moments.</li></ol>
-          <p class="privacy"><strong>Your data stays local.</strong> This page does not upload files or require an API key.</p>
-        </aside>
-      </section>
+        <div id="empty-state" class="empty-state panel" hidden>
+          <strong>No moments at this setting.</strong>
+          <span>Try <button type="button" class="text-button" data-sensitivity="high">More</button> sensitivity, or a lower minimum in Advanced.</span>
+        </div>
 
-      <section id="results" class="results" hidden aria-live="polite">
-        <div class="results-head"><div><p class="eyebrow">ANALYSIS READY</p><h2 id="result-title">Candidate moments</h2></div><div class="result-actions"><button id="download-json" class="secondary-button" type="button">Download JSON</button><button id="download-csv" class="secondary-button" type="button">Download CSV</button></div></div>
-        <div class="metrics"><article><strong id="message-count">0</strong><span>messages analyzed</span></article><article><strong id="moment-count">0</strong><span>candidate moments</span></article><article><strong id="peak-rate">0</strong><span>peak msgs / window</span></article></div>
-        <div id="empty-state" class="empty-state" hidden>No moments matched these settings. Try a lower threshold or minimum message count.</div>
         <div id="moment-list" class="moment-list"></div>
+
+        <div class="export panel">
+          <div>
+            <h3>Export</h3>
+            <p class="hint" id="export-hint">Exports all moments. Star some to export just those.</p>
+          </div>
+          <div class="export-actions">
+            <button id="copy-chapters" class="secondary-button" type="button">Copy as chapters</button>
+            <button id="download-csv" class="secondary-button" type="button">Download CSV</button>
+            <button id="download-json" class="secondary-button" type="button">Download JSON</button>
+          </div>
+        </div>
       </section>
 
-      <section class="integration-note">
-        <p class="eyebrow">OPTIONAL DESKTOP INTEGRATION</p>
-        <p>For VOD downloads, FFmpeg thumbnails, open-vocabulary CLIP frame labels, reaction attribution, and optional Gemini explanations, use the included Python companion. API credentials remain in <code>.env</code>, never in this frontend.</p>
-      </section>
+      <footer class="site-footer">
+        <p>Viewtopsy measures bursts of chat messages and compares each one to the stream’s normal pace. A spike usually means something happened, but give each moment a quick watch before clipping.</p>
+      </footer>
     </main>
-    <template id="moment-template"><article class="moment-card"><div class="moment-time"></div><div class="moment-body"><div class="moment-heading"><h3></h3><span class="score"></span></div><p class="keywords"></p><blockquote></blockquote></div></article></template>
+
+    <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <template id="moment-template">
+      <article class="moment-card" tabindex="-1">
+        <div class="moment-side">
+          <span class="moment-rank"></span>
+          <button class="moment-time" type="button" title="Copy timestamp"></button>
+        </div>
+        <div class="moment-body">
+          <div class="moment-heading">
+            <div class="intensity" aria-hidden="true"><span class="intensity-fill"></span></div>
+            <p class="moment-stats"></p>
+            <div class="moment-actions">
+              <a class="watch-link secondary-button small" target="_blank" rel="noopener noreferrer">Watch ↗</a>
+              <button class="star-button" type="button" aria-pressed="false" title="Star this moment">☆</button>
+            </div>
+          </div>
+          <ul class="keyword-list"></ul>
+          <ul class="sample-list"></ul>
+          <input class="note-input" type="text" maxlength="80" placeholder="Add a note or clip title…" aria-label="Note for this moment" />
+        </div>
+      </article>
+    </template>
+
+    <script src="analysis.js"></script>
+    <script src="sample.js"></script>
     <script src="app.js"></script>
   </body>
 </html>

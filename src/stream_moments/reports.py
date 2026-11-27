@@ -8,9 +8,10 @@ from .models import Moment
 
 
 def _clock(seconds: float) -> str:
+    """Same format as the web app: M:SS, or H:MM:SS past the first hour."""
     minutes, second = divmod(int(seconds), 60)
     hour, minute = divmod(minutes, 60)
-    return f"{hour:02d}:{minute:02d}:{second:02d}"
+    return f"{hour}:{minute:02d}:{second:02d}" if hour else f"{minute}:{second:02d}"
 
 
 def write_reports(platform: str, video_id: str, moments: list[Moment], output_directory: Path) -> tuple[Path, Path]:
@@ -21,7 +22,9 @@ def write_reports(platform: str, video_id: str, moments: list[Moment], output_di
     json_path.write_text(json.dumps({"platform": platform, "video_id": video_id, "moments": [asdict(moment) for moment in moments]}, indent=2), encoding="utf-8")
     lines = [f"# Stream moments: {platform} / {video_id}", "", f"Found {len(moments)} candidate moment(s).", ""]
     for number, moment in enumerate(moments, 1):
-        lines.extend([f"## {number}. {_clock(moment.timestamp)}", "", f"- Chat: {moment.message_count} messages (z-score {moment.z_score})", f"- Keywords: {', '.join(moment.keywords) or '—'}", f"- Samples: {' | '.join(moment.sample_messages)}"])
+        lines.extend([f"## {number}. {_clock(moment.timestamp)}", "", f"- Chat: {moment.message_count} messages"
+                      + (f", {moment.intensity}x normal pace" if moment.intensity else "")
+                      + f" (z-score {moment.z_score})", f"- Keywords: {', '.join(moment.keywords) or '—'}", f"- Samples: {' | '.join(moment.sample_messages)}"])
         if moment.frame_path:
             lines.append(f"- Frame: `{moment.frame_path}`")
         if moment.visual_labels:

@@ -4,8 +4,8 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "stream-moments"
-version = "0.1.0"
-description = "Find high-engagement moments in Twitch and YouTube streams/VODs."
+version = "0.2.0"
+description = "Viewtopsy: find high-engagement moments in Twitch and YouTube streams/VODs."
 requires-python = ">=3.10"
 dependencies = ["requests>=2.31"]
 
@@ -18,3 +18,7 @@ stream-moments = "stream_moments.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

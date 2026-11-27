@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 import re
 from collections.abc import Iterable
 from pathlib import Path
@@ -29,29 +30,63 @@ def _message_from_row(row: dict) -> ChatMessage:
     timestamp = row.get("timestamp", row.get("time", row.get("offset")))
     text = row.get("message", row.get("text", row.get("content", "")))
     author = row.get("author", row.get("user", row.get("username", "")))
+    if isinstance(author, dict):
+        author = author.get("name", "")
     if timestamp is None or not str(text).strip():
         raise ValueError("Every chat row needs timestamp/time and message/text/content.")
     return ChatMessage(parse_timestamp(timestamp), str(text), str(author))
 
 
+def _normalize(row: dict) -> dict:
+    """Map known tool-specific shapes onto timestamp/message/author."""
+    if "content_offset_seconds" in row:  # TwitchDownloader JSON
+        return {
+            "timestamp": row["content_offset_seconds"],
+            "message": (row.get("message") or {}).get("body", ""),
+            "author": (row.get("commenter") or {}).get("display_name", ""),
+        }
+    if "time_in_seconds" in row:  # chat-downloader (YouTube and others)
+        return {"timestamp": row["time_in_seconds"], "message": row.get("message", ""), "author": row.get("author", "")}
+    return row
+
+
+def _json_rows(raw: str) -> list[dict]:
+    text = raw.strip()
+    if text.startswith("{") and "\n{" in text:  # newline-delimited JSON
+        try:
+            return [json.loads(line) for line in text.splitlines() if line.strip()]
+        except json.JSONDecodeError:
+            pass
+    payload = json.loads(text)
+    if isinstance(payload, list):
+        return payload
+    return payload.get("comments") or payload.get("messages") or []
+
+
 def load_chat(path: Path) -> list[ChatMessage]:
-    """Load generic JSON/CSV exports plus the common TwitchDownloader JSON shape."""
+    """Load generic JSON/CSV exports, TwitchDownloader JSON and chat-downloader JSON.
+
+    Rows without a timestamp or text are skipped, like in the web app.
+    """
     if not path.is_file():
         raise FileNotFoundError(f"Chat file not found: {path}")
-    if path.suffix.lower() == ".csv":
+    suffix = path.suffix.lower()
+    if suffix == ".csv":
         with path.open(encoding="utf-8-sig", newline="") as handle:
-            messages = [_message_from_row(row) for row in csv.DictReader(handle)]
-    elif path.suffix.lower() == ".json":
-        payload = json.loads(path.read_text(encoding="utf-8"))
-        rows: Iterable[dict] = payload.get("comments", []) if isinstance(payload, dict) else payload
-        messages = []
-        for row in rows:
-            if "content_offset_seconds" in row:  # TwitchDownloader JSON
-                rows_data = {"timestamp": row["content_offset_seconds"], "message": row.get("message", {}).get("body", ""), "author": row.get("commenter", {}).get("display_name", "")}
-                messages.append(_message_from_row(rows_data))
-            else:
-                messages.append(_message_from_row(row))
+            rows: Iterable[dict] = [{key.strip().lower(): value for key, value in row.items() if key} for row in csv.DictReader(handle)]
+    elif suffix in (".json", ".jsonl"):
+        rows = _json_rows(path.read_text(encoding="utf-8-sig"))
     else:
-        raise ValueError("Chat input must be .json or .csv")
-    return sorted(messages, key=lambda message: message.timestamp)
+        raise ValueError("Chat input must be .json, .jsonl or .csv")
 
+    messages = []
+    for row in rows:
+        try:
+            message = _message_from_row(_normalize(row))
+        except (ValueError, TypeError):
+            continue
+        if math.isfinite(message.timestamp) and message.timestamp >= 0:
+            messages.append(message)
+    if not messages:
+        raise ValueError(f"No messages with a timestamp and text were found in {path}.")
+    return sorted(messages, key=lambda message: message.timestamp)

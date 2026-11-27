@@ -5,7 +5,7 @@ import sys
 from dataclasses import replace
 from pathlib import Path
 
-from .analyzer import find_moments
+from .analyzer import SENSITIVITY, find_moments
 from .chat import load_chat
 from .config import Settings
 from .media import download_video, extract_frame, fetch_twitch_chat
@@ -16,7 +16,8 @@ from .vision import ClipClassifier, attribute_reaction, gemini_explanation
 
 def _analyze(args: argparse.Namespace) -> int:
     messages = load_chat(Path(args.chat))
-    moments = find_moments(messages, args.window_seconds, args.z_threshold, args.min_messages, args.max_moments)
+    threshold = args.z_threshold if args.z_threshold is not None else SENSITIVITY[args.sensitivity]
+    moments = find_moments(messages, args.window_seconds, threshold, args.min_messages, args.max_moments)
     visual_requested = args.visual_analysis or args.gemini_explanations
     classifier = ClipClassifier() if visual_requested else None
     settings = Settings.from_environment() if args.gemini_explanations else None
@@ -53,15 +54,16 @@ def _metadata(args: argparse.Namespace) -> int:
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(prog="stream-moments", description="Find high-engagement Twitch/YouTube stream moments.")
+    parser = argparse.ArgumentParser(prog="stream-moments", description="Viewtopsy: find high-engagement Twitch/YouTube stream moments.")
     commands = parser.add_subparsers(dest="command", required=True)
     analyze = commands.add_parser("analyze", help="Analyze an imported chat JSON/CSV file.")
-    analyze.add_argument("--platform", choices=("twitch", "youtube"), required=True)
-    analyze.add_argument("--id", required=True, help="Twitch VOD ID or YouTube video ID")
+    analyze.add_argument("--platform", choices=("twitch", "youtube"), default="twitch")
+    analyze.add_argument("--id", default="stream", help="Twitch VOD ID or YouTube video ID (used in report names)")
     analyze.add_argument("--chat", required=True, help="JSON/CSV chat export")
     analyze.add_argument("--video", help="Optional local VOD file for FFmpeg thumbnails")
-    analyze.add_argument("--window-seconds", type=int, default=15)
-    analyze.add_argument("--z-threshold", type=float, default=2.0)
+    analyze.add_argument("--window-seconds", type=float, default=15)
+    analyze.add_argument("--sensitivity", choices=tuple(SENSITIVITY), default="medium", help="low = fewer, bigger moments; high = more candidates")
+    analyze.add_argument("--z-threshold", type=float, help="Custom spike threshold; overrides --sensitivity")
     analyze.add_argument("--min-messages", type=int, default=5)
     analyze.add_argument("--max-moments", type=int, default=25)
     analyze.add_argument("--reports-dir", default="reports")

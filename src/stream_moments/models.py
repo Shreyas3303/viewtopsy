@@ -20,6 +20,10 @@ class Moment:
     z_score: float
     sample_messages: list[str]
     keywords: list[str]
+    peak_time: float | None = None
+    peak_count: int | None = None
+    intensity: float | None = None
+    unique_chatters: int | None = None
     frame_path: str | None = None
     visual_description: str | None = None
     visual_labels: list[dict[str, float | str]] | None = None
