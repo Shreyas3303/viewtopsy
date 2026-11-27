@@ -917,7 +917,10 @@
     const model = $("#ai-model").value || "auto";
     const ex = state.explainer;
     if (!ex || ex.key !== state.apiKey || ex.choice !== model) {
-      state.explainer = Object.assign(X.createExplainer({ apiKey: state.apiKey, model }), { key: state.apiKey, choice: model });
+      state.explainer = Object.assign(
+        X.createExplainer({ apiKey: state.apiKey, model, onStatus: (text) => { $("#ai-status").textContent = text; } }),
+        { key: state.apiKey, choice: model },
+      );
     }
     return state.explainer;
   }

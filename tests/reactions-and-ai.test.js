@@ -231,3 +231,71 @@ test("Gemini: a bad key or an explicit missing model gives a clear error", async
   await assert.rejects(X.createExplainer({ apiKey: "AIzaBAD", fetchImpl: api.fetchImpl }).explain(input), /key was rejected/);
   await assert.rejects(X.createExplainer({ apiKey: "AIzaTest", model: "gemini-0-flash", fetchImpl: api.fetchImpl }).explain(input), /Model not found/);
 });
+
+// ---------------------------------------------------------------------------
+// Busy models ("high demand", "overloaded")
+// ---------------------------------------------------------------------------
+
+/** A fake Gemini where some models answer "high demand" a number of times. */
+function busyGemini({ models, busy = {} }) {
+  const calls = [];
+  const left = { ...busy };
+  const json = (status, body) => ({ ok: status < 400, status, json: async () => body });
+  const fetchImpl = async (url) => {
+    if (url.includes("/models?")) return json(200, { models: models.map((id) => ({ name: `models/${id}`, supportedGenerationMethods: ["generateContent"] })) });
+    const model = decodeURIComponent(url.match(/models\/([^:]+):generateContent/)[1]);
+    calls.push(model);
+    if (left[model] === Infinity || left[model] > 0) {
+      left[model] -= 1;
+      return json(503, { error: { code: 503, status: "UNAVAILABLE", message: "This model is currently experiencing high demand. Spikes in demand are usually temporary. Please try again later." } });
+    }
+    return json(200, { candidates: [{ content: { parts: [{ text: `{"title":"from ${model}","trigger":"gameplay","confidence":"high","evidence":[]}` }] }, finishReason: "STOP" }] });
+  };
+  return { fetchImpl, calls };
+}
+
+test("a busy model is retried after a pause and then works", async () => {
+  const api = busyGemini({ models: ["gemini-3.6-flash"], busy: { "gemini-3.6-flash": 1 } });
+  const pauses = [];
+  const statuses = [];
+  const ex = X.createExplainer({ apiKey: "AIzaT", fetchImpl: api.fetchImpl, sleep: async (ms) => pauses.push(ms), onStatus: (t) => statuses.push(t) });
+  const result = await ex.explain(input);
+  assert.equal(result.model, "gemini-3.6-flash");
+  assert.deepEqual(api.calls, ["gemini-3.6-flash", "gemini-3.6-flash"]);
+  assert.deepEqual(pauses, [2000]);
+  assert.match(statuses[0], /busy, trying again in 2s/);
+});
+
+test("a model that stays busy is swapped for the next one, which is remembered", async () => {
+  const api = busyGemini({ models: ["gemini-3.7-flash", "gemini-3.6-flash"], busy: { "gemini-3.7-flash": Infinity } });
+  const statuses = [];
+  const ex = X.createExplainer({ apiKey: "AIzaT", fetchImpl: api.fetchImpl, sleep: async () => {}, onStatus: (t) => statuses.push(t) });
+  const first = await ex.explain(input);
+  assert.equal(first.model, "gemini-3.6-flash");
+  assert.deepEqual(api.calls, ["gemini-3.7-flash", "gemini-3.7-flash", "gemini-3.7-flash", "gemini-3.6-flash"]);
+  assert.ok(statuses.some((t) => /switching to gemini-3.6-flash/.test(t)));
+  await ex.explain(input);
+  assert.equal(api.calls.at(-1), "gemini-3.6-flash"); // goes straight to the one that worked
+  assert.equal(api.calls.length, 5);
+});
+
+test("when every model is busy, one clear error stops Explain all", async () => {
+  const api = busyGemini({ models: ["gemini-3.7-flash", "gemini-3.6-flash"], busy: { "gemini-3.7-flash": Infinity, "gemini-3.6-flash": Infinity } });
+  await assert.rejects(
+    X.createExplainer({ apiKey: "AIzaT", fetchImpl: api.fetchImpl, sleep: async () => {} }).explain(input),
+    (error) => error.fatal && error.busy && /overloaded on every model/.test(error.message),
+  );
+  assert.equal(api.calls.length, 6); // 3 tries on each model
+});
+
+test("Claude 'overloaded' is retried too", async () => {
+  let n = 0;
+  const fetchImpl = async () => {
+    n += 1;
+    if (n === 1) return { ok: false, status: 529, json: async () => ({ error: { type: "overloaded_error", message: "Overloaded" } }) };
+    return { ok: true, status: 200, json: async () => ({ content: [{ type: "text", text: '{"title":"ok","trigger":"gameplay","confidence":"high","evidence":[]}' }] }) };
+  };
+  const result = await X.createExplainer({ apiKey: "sk-ant-x", fetchImpl, sleep: async () => {} }).explain(input);
+  assert.equal(result.title, "ok");
+  assert.equal(n, 2);
+});

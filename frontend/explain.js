@@ -277,6 +277,11 @@
     } else if (status === 404) {
       error.message = `Model not found: ${detail}`;
       error.tryNextModel = true;
+    } else if ([500, 502, 503, 504, 529].includes(status) || /high demand|overloaded|temporarily unavailable|try again later/i.test(detail)) {
+      // The service is busy (e.g. Gemini's "high demand" or Claude's "overloaded").
+      // Usually brief: retry, then try another model.
+      error.message = `${PROVIDERS[provider].label} is busy right now (${detail.replace(/\.$/, "")}).`;
+      error.busy = true;
     } else if (status === 429) {
       // "limit: 0" means this model has no free quota on this key; another model may.
       if (/limit:\s*0\b/.test(detail)) {
@@ -325,14 +330,33 @@
    * @param {{apiKey: string, model?: string, fetchImpl?: Function}} options
    *   model: "auto" (default) or a specific model id.
    */
-  function createExplainer({ apiKey, model = "auto", fetchImpl = typeof fetch !== "undefined" ? fetch.bind(globalThis) : null } = {}) {
+  const RETRY_DELAYS = [2000, 6000]; // wait before the 2nd and 3rd try when a model is busy
+  const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  /**
+   * Creates an explainer for one API key. It remembers which Gemini model
+   * worked, so later moments go straight to it.
+   * @param {object} options
+   *   apiKey
+   *   model: "auto" (default) or a specific model id
+   *   onStatus: called with short progress text ("Gemini is busy, retrying…")
+   *   fetchImpl, sleep: injectable for tests
+   */
+  function createExplainer({
+    apiKey,
+    model = "auto",
+    onStatus = () => {},
+    fetchImpl = typeof fetch !== "undefined" ? fetch.bind(globalThis) : null,
+    sleep = wait,
+  } = {}) {
     const key = String(apiKey || "").trim();
     const provider = detectProvider(key);
+    const userChoice = model !== "auto";
     let candidates = null; // Gemini models to try, best first
-    let chosen = model !== "auto" ? model : null;
+    let chosen = userChoice ? model : null;
 
     async function geminiCandidates() {
-      if (chosen) return [chosen];
+      if (userChoice) return [model];
       if (!candidates) {
         try {
           candidates = await listGeminiModels(key, fetchImpl);
@@ -342,7 +366,32 @@
         }
         if (!candidates.length) candidates = GEMINI_FALLBACKS.slice();
       }
-      return candidates;
+      // The model that last worked goes first.
+      return chosen ? [chosen, ...candidates.filter((c) => c !== chosen)] : candidates;
+    }
+
+    /** Calls `send`, retrying with a pause while the service says it's busy. */
+    async function withRetries(send, label) {
+      for (let attempt = 0; ; attempt += 1) {
+        try {
+          return await send();
+        } catch (error) {
+          if (!error.busy || attempt >= RETRY_DELAYS.length) throw error;
+          onStatus(`${label} is busy, trying again in ${RETRY_DELAYS[attempt] / 1000}s…`);
+          await sleep(RETRY_DELAYS[attempt]);
+        }
+      }
+    }
+
+    function allBusy(lastError) {
+      const error = new Error(
+        provider === "gemini" && !userChoice
+          ? "Gemini is overloaded on every model your key can use. This is usually brief: try again in a few minutes."
+          : `${lastError.message} Try again in a few minutes.`,
+      );
+      error.busy = true;
+      error.fatal = true; // stop "Explain all" instead of failing every moment
+      return error;
     }
 
     return {
@@ -360,27 +409,41 @@
 
         if (provider === "anthropic") {
           const id = chosen || MODELS[0].id;
-          const body = await post(ANTHROPIC_URL, {
-            "x-api-key": key,
-            "anthropic-version": "2023-06-01",
-            "anthropic-dangerous-direct-browser-access": "true",
-          }, buildRequest(input, id), provider, fetchImpl);
-          chosen = id;
-          return { ...parseResponse(body), provider, model: id };
+          try {
+            const body = await withRetries(() => post(ANTHROPIC_URL, {
+              "x-api-key": key,
+              "anthropic-version": "2023-06-01",
+              "anthropic-dangerous-direct-browser-access": "true",
+            }, buildRequest(input, id), provider, fetchImpl), "Claude");
+            chosen = id;
+            return { ...parseResponse(body), provider, model: id };
+          } catch (error) {
+            throw error.busy ? allBusy(error) : error;
+          }
         }
 
         let lastError = null;
-        for (const id of await geminiCandidates()) {
+        const list = await geminiCandidates();
+        for (const [i, id] of list.entries()) {
           try {
-            const body = await post(`${GEMINI_BASE}/models/${encodeURIComponent(id)}:generateContent`, { "x-goog-api-key": key }, buildGeminiRequest(input), provider, fetchImpl);
+            const body = await withRetries(
+              () => post(`${GEMINI_BASE}/models/${encodeURIComponent(id)}:generateContent`, { "x-goog-api-key": key }, buildGeminiRequest(input), provider, fetchImpl),
+              id,
+            );
             chosen = id;
             return { ...parseGeminiResponse(body), provider, model: id };
           } catch (error) {
             lastError = error;
-            if (!error.tryNextModel || chosen === id) throw error;
+            if (error.busy) {
+              if (list[i + 1]) onStatus(`${id} is still busy, switching to ${list[i + 1]}…`);
+              continue;
+            }
+            if (!error.tryNextModel || userChoice) throw error;
             if (candidates) candidates = candidates.filter((c) => c !== id);
+            if (chosen === id) chosen = null;
           }
         }
+        if (lastError?.busy) throw allBusy(lastError);
         throw lastError || new Error("No Gemini model on this key could look at images.");
       },
     };
