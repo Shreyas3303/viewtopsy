@@ -29,11 +29,11 @@
   ];
 
   const IDLE_CHAT = [
-    "what game is this", "hi chat", "how long has stream been going", "this music is nice",
+    "what game is this", "chat is cooking today", "how long has stream been going", "this music is nice",
     "first time catching a stream live", "gg", "what rank are you", "hydrate", "o7",
     "love the new overlay", "is this ranked", "chat is so chill today", "back from dinner what did i miss",
     "that build looks strong", "what sens do you use", "lurking", "nice", "true", "lol",
-    "hello from germany", "this map is so pretty", "take your time", "big brain", "the vibes are immaculate",
+    "watching from germany", "this map is so pretty", "take your time", "big brain", "the vibes are immaculate",
   ];
 
   // Each event is a burst of excited chat: when it happens, how big, what people say.

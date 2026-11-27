@@ -74,6 +74,16 @@ test("clip score prefers organic, broad, unclipped moments and explains why", ()
   assert.match(scores.get(2).reasons.at(-1), /prompted, so ranked lower/);
 });
 
+test("greetings only set the mood when nothing else stands out", () => {
+  const msgs = [
+    ...Array.from({ length: 6 }, (_, i) => msg(i, "hi chat")),
+    ...Array.from({ length: 4 }, (_, i) => msg(10 + i, "KEKW")),
+    ...Array.from({ length: 10 }, (_, i) => msg(60 + i, "hello")),
+  ];
+  const rows = I.moodTimeline(msgs, { start: 0, end: 120, bucket: 60 }, R.profile);
+  assert.deepEqual(rows.map((r) => r.mood), ["laughter", "greeting"]);
+});
+
 test("mood timeline picks the main reaction per bucket, or none", () => {
   const messages = sorted([
     ...Array.from({ length: 10 }, (_, i) => msg(i, "KEKW")),

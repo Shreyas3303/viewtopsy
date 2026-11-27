@@ -334,6 +334,17 @@
     if (typeof updateFetchClipsButton === "function") updateFetchClipsButton();
   }
 
+  /** Updates each card's clip score and range after scores change (e.g. a new explanation). */
+  function refreshCardScores() {
+    for (const m of enrichedMoments()) {
+      const card = cardFor(m.windowStart);
+      if (!card) continue;
+      $(".score-pill", card).textContent = m.clipScore;
+      $(".score-pill", card).title = `Clip score ${m.clipScore}/100${m.clipReasons.length ? `: ${m.clipReasons.join(", ")}` : ""}`;
+      $(".range-text", card).textContent = `Suggested clip ${A.clock(m.clipRange.in)} → ${A.clock(m.clipRange.out)} (${m.clipRange.length}s)${m.clipRange.fromAi ? " · starts at the AI’s cause time" : ""}`;
+    }
+  }
+
   function renderShortlist() {
     const section = $("#shortlist");
     const list = $("#shortlist-list");
@@ -638,7 +649,8 @@
       $(".score-pill", card).title = `Clip score ${moment.clipScore}/100${moment.clipReasons.length ? `: ${moment.clipReasons.join(", ")}` : ""}`;
       $(".range-text", card).textContent = `Suggested clip ${A.clock(range.in)} → ${A.clock(range.out)} (${range.length}s)${range.fromAi ? " · starts at the AI’s cause time" : ""}`;
       $(".copy-range", card).addEventListener("click", () => {
-        copyText(`${A.clock(range.in)}-${A.clock(range.out)}`).then(() => toast("Clip range copied"));
+        const live = enrichedMoments().find((m) => m.windowStart === key)?.clipRange || range;
+        copyText(`${A.clock(live.in)}-${A.clock(live.out)}`).then(() => toast("Clip range copied"));
       });
 
       // Reactions
@@ -949,6 +961,9 @@
       state.explanations.set(key, { status: "error", error: error.message, fatal: Boolean(error.fatal) });
     }
     paintExplanation(moment);
+    // AI titles and confidence feed the shortlist and clip scores.
+    renderShortlist();
+    refreshCardScores();
     updateAiControls();
   }
 
@@ -1299,7 +1314,7 @@
       const x2 = x(b.end);
       const selected = state.panel?.kind === "range" && state.panel.from === b.start && state.panel.to === b.end;
       const rect = svg("rect", { class: `mood-cell mood-${b.mood || "none"}${selected ? " selected" : ""}`, x: x1, y, width: Math.max(1, x2 - x1 + 0.5), height: 16 });
-      rect.addEventListener("click", () => openRange(b.start, b.end, b.mood ? `mostly ${R.TYPES.find((t) => t.id === b.mood)?.label.toLowerCase()}` : "no clear reaction"));
+      rect.addEventListener("click", () => openRange(b.start, b.end));
       const title = svg("title");
       const label = b.mood ? R.TYPES.find((t) => t.id === b.mood)?.label : "No clear reaction";
       title.textContent = `${A.clock(b.start)}–${A.clock(b.end)} · ${label} · ${b.count} messages`;

@@ -1,6 +1,6 @@
 {
   "name": "viewtopsy",
-  "version": "0.2.0",
+  "version": "0.4.0",
   "private": true,
   "description": "Find the moments your chat loved. Browser app for ranking Twitch and YouTube VOD highlights from chat.",
   "scripts": {

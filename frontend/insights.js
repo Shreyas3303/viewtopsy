@@ -490,9 +490,11 @@ ${markers}
       while (j < messages.length && messages[j].timestamp < t) j += 1;
       for (let k = j; k < messages.length && messages[k].timestamp < t + bucket; k += 1) inside.push(messages[k]);
       const p = profileFn(inside);
-      const top = p.types[0];
+      // Hellos and goodbyes aren't a reaction to the stream, so they only
+      // count as the mood when nothing else stands out.
+      const top = p.types.find((t) => t.id !== "greeting" && t.share >= 0.3) || (p.types[0]?.id === "greeting" && p.types[0].share >= 0.6 ? p.types[0] : null);
       const read = Math.round(p.readShare * inside.length);
-      rows.push({ start: t, end: Math.min(end, t + bucket), mood: top && read >= 3 && top.share >= 0.3 ? top.id : null, count: inside.length });
+      rows.push({ start: t, end: Math.min(end, t + bucket), mood: top && read >= 3 ? top.id : null, count: inside.length });
     }
     return rows;
   }
@@ -560,7 +562,7 @@ ${markers}
     const countedMinutes = Math.max(1, (last - Math.max(first + 600, first)) / 60);
     const typical = Math.round(arrivals.reduce((a, b) => a + b, 0) / countedMinutes);
     const newChatterWaves = [...perMinute]
-      .filter(([, n]) => n >= Math.max(5, typical * 1.8))
+      .filter(([, n]) => n >= Math.max(8, typical * 1.8))
       .sort((a, b) => b[1] - a[1])
       .slice(0, 4)
       .map(([start, count]) => {

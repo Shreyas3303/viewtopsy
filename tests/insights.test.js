@@ -3,231 +3,191 @@ const test = require("node:test");
 const assert = require("node:assert/strict");
 const A = require("../frontend/analysis.js");
 const R = require("../frontend/reactions.js");
-const X = require("../frontend/explain.js");
+const I = require("../frontend/insights.js");
+const { ViewtopsyFrames: F } = require("../frontend/frames.js");
+
+const msg = (timestamp, text = "chat", author = `u${Math.floor(timestamp * 7) % 50}`) => ({ timestamp, text, author });
+
+/** Steady chat (one message every `every` seconds) between `from` and `to`. */
+function steady(from, to, every = 3, text = "chat") {
+  const out = [];
+  for (let t = from; t < to; t += every) out.push(msg(t, text));
+  return out;
+}
+const burst = (at, count, text, spread = 0.5) => Array.from({ length: count }, (_, i) => msg(at + i * spread, text, `fan${i}`));
+const sorted = (list) => list.sort((a, b) => a.timestamp - b.timestamp);
 
 // ---------------------------------------------------------------------------
-// Reactions
+// Where chat starts rising, and which frames get captured
 // ---------------------------------------------------------------------------
 
-test("reads emotes, phrases and stretched words", () => {
-  const cases = {
-    KEKW: ["laughter"],
-    "he screamed LMAOOO": ["laughter"],
-    "NO WAY": ["shock"],
-    monkaS: ["tension"],
-    W: ["hype"],
-    wwwww: ["hype"],
-    "LETS GOOOO": ["hype"],
-    Sadge: ["sad"],
-    "<3": ["love"],
-    "???": ["confusion"],
-    "thank you for the 50 gifted!": ["support"],
-    YES: ["voting"],
-    "ITS ASS": ["voting"],
-    cohhLUL: ["laughter"],
-    kaicenatW: ["hype"],
-    "what game is this": [],
+test("finds where chat starts rising before the peak", () => {
+  const messages = sorted([...steady(0, 600, 3), ...burst(300, 12, "oh", 1.2), ...burst(315, 40, "NO WAY", 0.3)]);
+  const { moments } = A.findMoments(messages, { zThreshold: 2 });
+  assert.equal(moments.length, 1);
+  assert.equal(moments[0].onsetTime, 300); // the build-up window
+  assert.ok(moments[0].peakTime >= 315);
+});
+
+test("frames run from 25s before chat rises to the end of that window, tightest near the rise", () => {
+  const times = F.frameTimes(300, 15);
+  assert.equal(times.length, 8);
+  assert.equal(times[0], 275);
+  assert.equal(Math.round(times[7]), 312);
+  const gaps = times.slice(1).map((t, i) => t - times[i]);
+  assert.ok(gaps[0] > gaps[gaps.length - 1] * 3, "early gaps are wider than late ones");
+});
+
+// ---------------------------------------------------------------------------
+// Spike types
+// ---------------------------------------------------------------------------
+
+test("labels organic, prompted, alert and copypasta spikes", () => {
+  const kind = (texts) => {
+    const messages = texts.map((text, i) => msg(i, text, `a${i}`));
+    return I.momentKind(messages, R.profile(messages)).id;
   };
-  for (const [text, expected] of Object.entries(cases)) {
-    assert.deepEqual(R.classifyMessage(text), expected, text);
-  }
-});
-
-test("lowercase w, l and f are not read as emotes", () => {
-  assert.deepEqual(R.classifyMessage("w"), []);
-  assert.deepEqual(R.classifyMessage("l"), []);
-  assert.deepEqual(R.classifyMessage("f"), []);
-});
-
-test("profile and description of a moment", () => {
-  const msgs = ["KEKW", "LMAO", "KEKW", "lol", "NO WAY", "nice chat", "what game"].map((text) => ({ text }));
-  const p = R.profile(msgs);
-  assert.equal(p.dominant, "laughter");
-  assert.equal(p.types[0].count, 4);
-  assert.equal(Math.round(p.readShare * 100), 71);
-  assert.equal(R.describe(p), "Mostly laughter, some shock");
-  assert.equal(R.describe(R.profile([{ text: "ok then" }])), "No clear reaction in chat");
+  assert.equal(kind(["KEKW", "LMAO", "KEKW", "he fell", "LUL", "lol", "omg"]), "organic");
+  assert.equal(kind(["yes", "YES", "no", "NOOO", "its good", "yes", "1", "2"]), "prompted");
+  assert.equal(kind(["thank you for the gifted subs", "gifted!", "raid hype", "welcome raiders", "hype train", "W"]), "alert");
+  const pasta = "this is the greatest stream in the history of streams";
+  assert.equal(kind([pasta, pasta, pasta, pasta, pasta, pasta, "lol", "W", "true"]), "copypasta");
+  assert.equal(kind(["hi", "hello", "gn", "bye", "o7", "hey"]), "greeting");
 });
 
 // ---------------------------------------------------------------------------
-// Trimmed exports
+// Quiet stretches
 // ---------------------------------------------------------------------------
 
-const trimmedExport = JSON.stringify({
-  streamer: { name: "KaiCenat" },
-  video: { title: "KAI VS SPEED", id: "2939504732", start: 3600, end: 5400, length: 17889 },
-  comments: [3600, 3610, 3700].map((t, i) => ({ content_offset_seconds: t, commenter: { display_name: `u${i}` }, message: { body: "W" } })),
+test("finds a long quiet stretch and ignores short dips", () => {
+  const messages = sorted([
+    ...steady(0, 1200, 2),
+    ...steady(1200, 1500, 20, "anyone here?"), // 5 minutes nearly silent
+    ...steady(1500, 2400, 2),
+    ...steady(1800, 1860, 20), // only a 1-minute dip (still covered by steady chat above)
+  ]);
+  const result = A.findMoments(messages);
+  const quiet = I.findQuietStretches(messages, result, { windowSeconds: 15 });
+  assert.equal(quiet.length, 1);
+  assert.ok(Math.abs(quiet[0].start - 1200) <= 60, `starts near 20:00, got ${quiet[0].start}`);
+  assert.ok(quiet[0].duration >= 240);
+  assert.ok(quiet[0].pace < 0.3);
+  assert.equal(quiet[0].nearEdge, false);
+  assert.equal(quiet[0].samples[0].text, "anyone here?");
 });
 
-test("reads title, channel and trim start from a TwitchDownloader export", () => {
-  assert.deepEqual(A.readChatInfo(trimmedExport), {
-    platform: "twitch", title: "KAI VS SPEED", channel: "KaiCenat", videoId: "2939504732",
-    clipStart: 3600, clipEnd: 5400, streamLength: 17889, chapters: [], emotes: [],
-  });
-  assert.deepEqual(A.readChatInfo("[]"), {});
-  assert.deepEqual(A.readChatInfo("not json"), {});
-});
-
-test("timeline of a trimmed export starts at the clip, not 0:00", () => {
-  const messages = A.parseChatExport(trimmedExport, "kai.json");
-  const { timelineStart, timeline } = A.findMoments(messages, { minMessages: 1 });
-  assert.equal(timelineStart, 3600);
-  assert.equal(timeline.length, 7); // 3600..3705 in 15s windows
+test("steady chat has no quiet stretches", () => {
+  const messages = steady(0, 1800, 2);
+  assert.deepEqual(I.findQuietStretches(messages, A.findMoments(messages)), []);
 });
 
 // ---------------------------------------------------------------------------
-// AI explanations
+// Segments
 // ---------------------------------------------------------------------------
 
-const input = {
-  moment: { peakTime: 4005, windowStart: 3990, windowEnd: 4020, messageCount: 140, intensity: 3.3 },
-  frames: [{ time: 3985, dataUrl: "data:image/jpeg;base64,AAAA" }, { time: 3995, dataUrl: "data:image/jpeg;base64,BBBB" }],
-  chat: [{ timestamp: 4001, author: "amy", text: "LMAOOO" }],
-  reactions: { types: [{ label: "Laughter", share: 0.8 }], readShare: 0.4 },
-  context: { title: "KAI VS SPEED", channel: "KaiCenat" },
+test("scores segments by chapter when the export has them", () => {
+  const messages = sorted([...steady(0, 600, 6), ...steady(600, 1200, 2)]);
+  const result = A.findMoments(messages);
+  const chapters = [{ start: 0, end: 600, title: "Just Chatting" }, { start: 600, end: 5000, title: "GTA VI" }];
+  const { basis, segments } = I.segmentScores(messages, result, { chapters });
+  assert.equal(basis, "chapters");
+  assert.deepEqual(segments.map((s) => s.title), ["Just Chatting", "GTA VI"]);
+  assert.ok(segments[1].relative > 2 * segments[0].relative);
+  assert.equal(segments[1].end, 1199); // clipped to just after the last message
+});
+
+test("falls back to time blocks without chapters", () => {
+  const messages = steady(3600, 5400, 3);
+  const { basis, segments } = I.segmentScores(messages, A.findMoments(messages), { chapters: [{ start: 0, end: 99999, title: "One" }] });
+  assert.equal(basis, "time");
+  assert.equal(segments.length, 6); // 30 minutes in 5-minute blocks
+  assert.equal(segments[0].title, "1:00:00–1:05:00");
+});
+
+// ---------------------------------------------------------------------------
+// Existing clips
+// ---------------------------------------------------------------------------
+
+const helixClips = {
+  data: [
+    { id: "BigClip", url: "https://clips.twitch.tv/BigClip", title: "SPEED SCREAMS", view_count: 12000, vod_offset: 4990, duration: 30, video_id: "2939504732", creator_name: "fan" },
+    { id: "Other", title: "calm moment", view_count: 300, vod_offset: 4200, duration: 20, video_id: "2939504732" },
+    { id: "NoOffset", title: "deleted vod", view_count: 5, vod_offset: null, duration: 20, video_id: "2939504732" },
+    { id: "OtherVod", title: "elsewhere", view_count: 5, vod_offset: 10, duration: 20, video_id: "111" },
+  ],
 };
 
-test("builds a request with every frame in order and the chat", () => {
-  const body = X.buildRequest(input, "claude-sonnet-5-5");
-  assert.equal(body.model, "claude-sonnet-5-5");
-  const blocks = body.messages[0].content;
-  const images = blocks.filter((b) => b.type === "image");
-  assert.deepEqual(images.map((b) => b.source.data), ["AAAA", "BBBB"]);
-  assert.equal(images[0].source.media_type, "image/jpeg");
-  const text = blocks.filter((b) => b.type === "text").map((b) => b.text).join("\n");
-  assert.match(text, /KAI VS SPEED/);
-  assert.match(text, /Frame at 1:06:25/);
-  assert.match(text, /\[1:06:41\] amy: LMAOOO/);
-  assert.match(text, /Laughter 80%/);
-  assert.match(text, /cannot hear audio/);
+test("reads clips files and keeps only clips placed in this VOD", () => {
+  const clips = I.parseClips(JSON.stringify(helixClips), "2939504732");
+  assert.deepEqual(clips.map((c) => c.id), ["Other", "BigClip"]);
+  assert.equal(clips[1].views, 12000);
+  assert.deepEqual(I.parseClips([{ id: "x", vod_offset: 5 }]).map((c) => c.duration), [30]);
 });
 
-test("reads the model's JSON even with text around it, and cleans bad values", () => {
-  const reply = (text) => ({ content: [{ type: "text", text }] });
-  const good = X.parseResponse(reply('Sure:\n{"title":"Speed falls off the roof","what_happened":"x","why_chat_reacted":"y","trigger":"gameplay","cause_time":"1:06:30","confidence":"high","evidence":["frame 3"]}'));
-  assert.equal(good.title, "Speed falls off the roof");
-  assert.equal(good.triggerLabel, "Gameplay");
-  assert.equal(good.confidence, "high");
-  const odd = X.parseResponse(reply('{"trigger":"aliens","confidence":"certain","evidence":"nope"}'));
-  assert.equal(odd.trigger, "unclear");
-  assert.equal(odd.confidence, "low");
-  assert.deepEqual(odd.evidence, []);
-  assert.throws(() => X.parseResponse(reply("no json here")), /expected format/);
-});
-
-test("calls the Claude API with the browser headers and maps errors to readable messages", async () => {
-  let seen;
-  const ok = async (url, init) => {
-    seen = { url, init };
-    return { ok: true, status: 200, json: async () => ({ content: [{ type: "text", text: '{"title":"t","trigger":"streamer","confidence":"medium","evidence":[]}' }] }) };
-  };
-  const result = await X.explain(input, { apiKey: "sk-ant-test", model: "claude-haiku-5-5", fetchImpl: ok });
-  assert.equal(result.trigger, "streamer");
-  assert.equal(result.provider, "anthropic");
-  assert.equal(seen.url, "https://api.anthropic.com/v1/messages");
-  assert.equal(seen.init.headers["x-api-key"], "sk-ant-test");
-  assert.equal(seen.init.headers["anthropic-dangerous-direct-browser-access"], "true");
-  assert.equal(JSON.parse(seen.init.body).model, "claude-haiku-5-5");
-
-  const failing = (status, message = "nope") => async () => ({ ok: false, status, json: async () => ({ error: { message } }) });
-  await assert.rejects(X.explain(input, { apiKey: "sk-ant-k", fetchImpl: failing(401) }), /key was rejected/);
-  await assert.rejects(X.explain(input, { apiKey: "sk-ant-k", fetchImpl: failing(429) }), /Rate limited/);
-  await assert.rejects(X.explain(input, { apiKey: "sk-ant-k", fetchImpl: failing(404) }), /Model not found/);
-  await assert.rejects(X.explain(input, { apiKey: "", fetchImpl: ok }), /API key/);
-  await assert.rejects(X.explain({ ...input, frames: [] }, { apiKey: "sk-ant-k", fetchImpl: ok }), /No frames/);
+test("matches clips to moments and finds unclipped ones", () => {
+  const clips = I.parseClips(helixClips, "2939504732");
+  const moments = [
+    { windowStart: 5010, windowEnd: 5040, onsetTime: 5010 }, // clipped by BigClip (starts 20s before the rise)
+    { windowStart: 3700, windowEnd: 3715, onsetTime: 3700 }, // nobody clipped
+  ];
+  const { byMoment, unmatched } = I.matchClips(moments, clips);
+  assert.deepEqual(byMoment.get(5010).map((c) => c.id), ["BigClip"]);
+  assert.deepEqual(byMoment.get(3700), []);
+  assert.deepEqual(unmatched.map((c) => c.id), ["Other"]);
 });
 
 // ---------------------------------------------------------------------------
-// Gemini
+// Editor markers
 // ---------------------------------------------------------------------------
 
-test("works out the provider from the key", () => {
-  assert.equal(X.detectProvider("AIzaSyExample"), "gemini");
-  assert.equal(X.detectProvider("sk-ant-api03-x"), "anthropic");
-  assert.equal(X.detectProvider("something-else"), "gemini");
-  assert.equal(X.detectProvider(""), null);
+const exportMoments = [
+  { rank: 1, timestamp: 5280, windowEnd: 5310, intensity: 3.3, reaction: "Mostly laughter", keywords: ["banks"], kind: { id: "organic", label: "Organic reaction" }, ai: { title: "Heist <fails> & chat \"dies\"", whatHappened: "x" }, clips: [] },
+  { rank: 2, timestamp: 3780, windowEnd: 3810, intensity: 3.1, reaction: "Chat voting", keywords: ["yes"], kind: { id: "prompted", label: "Prompted" }, note: "Poll | pick" },
+  { rank: 3, timestamp: 100, windowEnd: 115, intensity: 2, keywords: [] }, // before the video starts: skipped
+];
+
+test("timecodes", () => {
+  assert.equal(I.timecode(0, 30), "00:00:00:00");
+  assert.equal(I.timecode(61.5, 30), "00:01:01:15");
+  assert.equal(I.timecode(5, 25, 1), "01:00:05:00");
 });
 
-test("ranks Gemini models: newest stable Flash first, skips non-vision kinds", () => {
-  const models = [
-    "gemini-2.5-flash", "gemini-3.7-flash", "gemini-3.6-flash", "gemini-3.5-flash-lite", "gemini-3-flash-preview",
-    "gemini-3.1-flash-image", "gemini-3.1-flash-tts-preview", "gemini-3.1-flash-live-preview", "gemini-3.1-pro-preview",
-    "gemini-embedding-001", "gemini-3.5-transcribe",
-  ].map((id) => ({ name: `models/${id}`, supportedGenerationMethods: ["generateContent"] }));
-  models.push({ name: "models/gemini-9.9-flash", supportedGenerationMethods: ["embedContent"] });
-  assert.deepEqual(X.rankGeminiModels(models), [
-    "gemini-3.7-flash", "gemini-3.6-flash", "gemini-2.5-flash", "gemini-3.5-flash-lite", "gemini-3-flash-preview",
+test("Resolve EDL markers are relative to the video file and in time order", () => {
+  const edl = I.toResolveEdl(exportMoments, { videoOffset: 3600, fps: 30 });
+  const lines = edl.split("\n");
+  assert.equal(lines[0], "TITLE: Viewtopsy markers");
+  const events = lines.filter((l) => /^\d{3} /.test(l));
+  assert.equal(events.length, 2);
+  assert.match(events[0], /^001 +001 +V +C +01:03:00:00 01:03:00:01 01:03:00:00 01:03:00:01/);
+  assert.match(edl, / \|C:ResolveColorBlue \|M:Poll pick \|D:900/);
+  assert.match(edl, / \|C:ResolveColorRed \|M:Heist <fails> & chat "dies" \|D:900/);
+});
+
+test("Premiere XML has escaped markers at frame positions", () => {
+  const out = I.toPremiereXml(exportMoments, { videoOffset: 3600, fps: 30, videoName: "kai clip.mp4", videoDuration: 1810 });
+  assert.match(out, /^<\?xml version="1.0" encoding="UTF-8"\?>\n<!DOCTYPE xmeml>/);
+  assert.equal((out.match(/<marker>/g) || []).length, 2);
+  assert.match(out, /<name>#1 Heist &lt;fails&gt; &amp; chat &quot;dies&quot;<\/name>/);
+  assert.match(out, /<in>50400<\/in>\s*<out>51300<\/out>/); // (5280-3600)*30 .. (5310-3600)*30
+  assert.match(out, /<pathurl>file:\/\/localhost\/kai%20clip.mp4<\/pathurl>/);
+  assert.match(out, /<duration>54300<\/duration>/);
+  assert.match(out, /Not clipped yet/);
+});
+
+// ---------------------------------------------------------------------------
+// Reaction lag
+// ---------------------------------------------------------------------------
+
+test("measures how long chat takes to react from AI cause times", () => {
+  const m = (onsetTime, causeTime, confidence = "high") => ({ onsetTime, windowSeconds: 15, ai: { causeTime, confidence } });
+  const lag = I.reactionLag([
+    m(5280, "1:27:55"), // 5287.5 - 5275 = 12.5
+    m(3780, "1:02:52"), // 3787.5 - 3772 = 15.5
+    m(4425, "1:13:39"), // 4432.5 - 4419 = 13.5
+    m(1000, "0:10:00", "low"), // ignored: low confidence
+    m(2000, "nonsense"), // ignored: unreadable
+    m(3000, "0:20:00"), // ignored: 1807s is implausible
   ]);
-});
-
-test("builds a Gemini request with inline JPEG frames and JSON output", () => {
-  const body = X.buildGeminiRequest(input);
-  const parts = body.contents[0].parts;
-  assert.deepEqual(parts.filter((p) => p.inline_data).map((p) => p.inline_data.data), ["AAAA", "BBBB"]);
-  assert.equal(parts.find((p) => p.inline_data).inline_data.mime_type, "image/jpeg");
-  assert.equal(body.generationConfig.responseMimeType, "application/json");
-  assert.match(parts.map((p) => p.text || "").join("\n"), /\[1:06:41\] amy: LMAOOO/);
-});
-
-const geminiReply = (text, extra = {}) => ({ candidates: [{ content: { parts: [{ text }] }, finishReason: "STOP", ...extra }] });
-
-test("reads Gemini replies and reports blocked or cut-off answers", () => {
-  const ok = X.parseGeminiResponse(geminiReply('{"title":"Big clutch","trigger":"gameplay","confidence":"high","evidence":["x"]}'));
-  assert.equal(ok.title, "Big clutch");
-  assert.equal(ok.triggerLabel, "Gameplay");
-  const withThought = X.parseGeminiResponse({ candidates: [{ content: { parts: [{ text: "thinking {not json", thought: true }, { text: '{"title":"T"}' }] } }] });
-  assert.equal(withThought.title, "T");
-  assert.throws(() => X.parseGeminiResponse({ promptFeedback: { blockReason: "SAFETY" } }), /declined.*SAFETY/);
-  assert.throws(() => X.parseGeminiResponse({ candidates: [{ content: { parts: [] }, finishReason: "MAX_TOKENS" }] }), /stopped early/);
-});
-
-/** A fake Gemini API: lists models, and some models have no free quota. */
-function fakeGemini({ models, noFreeQuota = [], listFails = false }) {
-  const calls = [];
-  const fetchImpl = async (url, init = {}) => {
-    calls.push({ url, init });
-    const json = (status, body) => ({ ok: status < 400, status, json: async () => body });
-    if (url.includes("/models?")) {
-      if (listFails) return json(500, { error: { message: "boom" } });
-      return json(200, { models: models.map((id) => ({ name: `models/${id}`, supportedGenerationMethods: ["generateContent"] })) });
-    }
-    const model = decodeURIComponent(url.match(/models\/([^:]+):generateContent/)[1]);
-    if (init.headers["x-goog-api-key"] === "AIzaBAD") return json(400, { error: { message: "API key not valid. Please pass a valid API key." } });
-    if (noFreeQuota.includes(model)) return json(429, { error: { message: `Quota exceeded for metric: generate_content_free_tier_requests, limit: 0, model: ${model}` } });
-    if (!models.includes(model)) return json(404, { error: { message: `models/${model} is not found` } });
-    return json(200, geminiReply(`{"title":"from ${model}","trigger":"gameplay","confidence":"medium","evidence":[]}`));
-  };
-  return { fetchImpl, calls };
-}
-
-test("Gemini: picks the best model automatically and remembers it", async () => {
-  const api = fakeGemini({ models: ["gemini-2.5-flash", "gemini-3.6-flash", "gemini-3.1-flash-image"] });
-  const ex = X.createExplainer({ apiKey: "AIzaTest", fetchImpl: api.fetchImpl });
-  assert.equal(ex.provider, "gemini");
-  const first = await ex.explain(input);
-  assert.equal(first.model, "gemini-3.6-flash");
-  assert.equal(first.title, "from gemini-3.6-flash");
-  assert.equal(api.calls[0].init.headers["x-goog-api-key"], "AIzaTest");
-  await ex.explain(input);
-  assert.equal(api.calls.filter((c) => c.url.includes("/models?")).length, 1); // listed once
-});
-
-test("Gemini: moves to the next model when one has no free quota", async () => {
-  const api = fakeGemini({ models: ["gemini-3.7-flash", "gemini-3.6-flash"], noFreeQuota: ["gemini-3.7-flash"] });
-  const ex = X.createExplainer({ apiKey: "AIzaTest", fetchImpl: api.fetchImpl });
-  const result = await ex.explain(input);
-  assert.equal(result.model, "gemini-3.6-flash");
-  assert.equal(ex.model, "gemini-3.6-flash");
-});
-
-test("Gemini: uses built-in model names if the list can't be fetched", async () => {
-  const api = fakeGemini({ models: ["gemini-2.5-flash"], listFails: true });
-  const result = await X.createExplainer({ apiKey: "AIzaTest", fetchImpl: api.fetchImpl }).explain(input);
-  assert.equal(result.model, "gemini-2.5-flash"); // walked the fallback list past models that 404
-});
-
-test("Gemini: a bad key or an explicit missing model gives a clear error", async () => {
-  const api = fakeGemini({ models: ["gemini-3.6-flash"] });
-  await assert.rejects(X.createExplainer({ apiKey: "AIzaBAD", fetchImpl: api.fetchImpl }).explain(input), /key was rejected/);
-  await assert.rejects(X.createExplainer({ apiKey: "AIzaTest", model: "gemini-0-flash", fetchImpl: api.fetchImpl }).explain(input), /Model not found/);
+  assert.deepEqual(lag, { count: 3, median: 14, min: 13, max: 16 });
+  assert.equal(I.reactionLag([]), null);
 });

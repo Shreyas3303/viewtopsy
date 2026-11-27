@@ -478,8 +478,8 @@ button:disabled { cursor: not-allowed; }
 .timeline .selection { fill: rgba(47, 106, 160, 0.14); stroke: #2f6aa0; stroke-width: 1; vector-effect: non-scaling-stroke; }
 .message-panel-head { display: flex; justify-content: space-between; align-items: baseline; gap: 1rem; }
 .message-panel-head p { margin: 0 0 0.4rem; }
-.message-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; list-style: none; padding: 0; margin: 0 0 0.5rem; }
-.message-chips li { font-size: 0.75rem; font-weight: 700; padding: 0.1rem 0.5rem; border-radius: 99px; background: var(--paper); border: 1px solid var(--line); }
+.search-results .message-chips { display: flex; flex-wrap: wrap; gap: 0.3rem; list-style: none; padding: 0; margin: 0.15rem 0 0.5rem; max-height: none; overflow: visible; }
+.search-results .message-chips li { display: inline-block; font-size: 0.75rem; font-weight: 700; padding: 0.1rem 0.55rem; border-radius: 99px; background: var(--paper); border: 1px solid var(--line); }
 
 .overview { padding: 1rem 1.25rem; display: grid; gap: 0.85rem; }
 .overview h3 { margin: 0; font-size: 1rem; }
