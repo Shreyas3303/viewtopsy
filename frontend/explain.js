@@ -251,13 +251,28 @@
     return error;
   }
 
+  /** Best guess at why the browser couldn't connect, from where the page is running. */
+  function connectionHint() {
+    const loc = typeof location !== "undefined" ? location : null;
+    const nav = typeof navigator !== "undefined" ? navigator : null;
+    if (loc && /(^|\.)claude\.(ai|site)$|claudeusercontent|artifact/i.test(loc.hostname || "")) {
+      return "This preview blocks outside connections. Download the repo and open frontend/index.html instead.";
+    }
+    if (nav && nav.brave) {
+      return "Brave Shields may be blocking it: click the lion icon in the address bar, turn Shields off for this page, and reload.";
+    }
+    if (nav && nav.onLine === false) return "You seem to be offline.";
+    return "An ad blocker, VPN or network filter may be blocking googleapis.com / anthropic.com. Try another browser or network.";
+  }
+
   async function post(url, headers, body, provider, fetchImpl) {
     let response;
     try {
       response = await fetchImpl(url, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify(body) });
-    } catch {
-      const error = new Error(`Couldn't reach ${PROVIDERS[provider].label}. Check your connection.`);
+    } catch (cause) {
+      const error = new Error(`Couldn't reach ${PROVIDERS[provider].label}. ${connectionHint()}`);
       error.fatal = true;
+      error.cause = cause;
       throw error;
     }
     const json = await response.json().catch(() => null);
