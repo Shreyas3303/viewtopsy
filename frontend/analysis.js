@@ -169,6 +169,15 @@
       clipStart: number(video.start),
       clipEnd: number(video.end),
       streamLength: number(video.length),
+      chapters: Array.isArray(video.chapters)
+        ? video.chapters
+          .map((c) => ({
+            start: Number(c.startMilliseconds) / 1000,
+            end: (Number(c.startMilliseconds) + Number(c.lengthMilliseconds)) / 1000,
+            title: String(c.gameDisplayName || c.description || "Untitled"),
+          }))
+          .filter((c) => Number.isFinite(c.start) && Number.isFinite(c.end) && c.end > c.start)
+        : [],
     };
   }
 
@@ -295,6 +304,14 @@
         inside.push(messages[j]);
       }
 
+      // Where chat started rising: walk back from the spike through windows
+      // that were already clearly above normal (up to 30s), since the cause
+      // comes before the busiest window.
+      let onsetIndex = group.start;
+      const maxBack = Math.ceil(30 / windowSeconds);
+      const rising = mean + 0.5 * deviation;
+      while (onsetIndex > 0 && group.start - onsetIndex < maxBack && counts[onsetIndex - 1] >= rising) onsetIndex -= 1;
+
       let peakIndex = group.start;
       for (let i = group.start; i <= group.end; i += 1) if (counts[i] > counts[peakIndex]) peakIndex = i;
       const peakCount = counts[peakIndex];
@@ -305,6 +322,8 @@
         // starts just before the reaction rather than in the middle of it.
         timestamp: Math.max(0, at(peakIndex) - windowSeconds),
         peakTime: at(peakIndex),
+        onsetTime: at(onsetIndex),
+        windowSeconds,
         windowStart,
         windowEnd,
         messageCount: inside.length,
@@ -387,11 +406,11 @@
   function toCsv(moments, platform, videoId) {
     const header = [
       "rank", "timestamp", "seconds", "messages", "peak_per_window", "intensity_x", "z_score",
-      "reaction", "keywords", "ai_title", "ai_trigger", "ai_what_happened", "ai_confidence", "link", "note",
+      "reaction", "type", "existing_clips", "keywords", "ai_title", "ai_trigger", "ai_what_happened", "ai_confidence", "link", "note",
     ];
     const rows = moments.map((m) => [
       m.rank, clock(m.timestamp), Math.floor(m.timestamp), m.messageCount, m.peakCount, m.intensity, m.zScore,
-      m.reaction || "", m.keywords.join(" | "),
+      m.reaction || "", m.kind?.label || "", m.clips == null ? "" : m.clips.length, m.keywords.join(" | "),
       m.ai?.title || "", m.ai?.triggerLabel || "", m.ai?.whatHappened || "", m.ai?.confidence || "",
       vodLink(platform, videoId, m.timestamp) || "", m.note || "",
     ]);

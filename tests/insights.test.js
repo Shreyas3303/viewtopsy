@@ -62,7 +62,7 @@ const trimmedExport = JSON.stringify({
 test("reads title, channel and trim start from a TwitchDownloader export", () => {
   assert.deepEqual(A.readChatInfo(trimmedExport), {
     platform: "twitch", title: "KAI VS SPEED", channel: "KaiCenat", videoId: "2939504732",
-    clipStart: 3600, clipEnd: 5400, streamLength: 17889,
+    clipStart: 3600, clipEnd: 5400, streamLength: 17889, chapters: [],
   });
   assert.deepEqual(A.readChatInfo("[]"), {});
   assert.deepEqual(A.readChatInfo("not json"), {});

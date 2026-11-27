@@ -4,6 +4,7 @@
 
   const A = window.ViewtopsyAnalysis;
   const R = window.ViewtopsyReactions;
+  const I = window.ViewtopsyInsights;
   const F = window.ViewtopsyFrames;
   const X = window.ViewtopsyExplain;
   const Sample = window.ViewtopsySample;
@@ -21,6 +22,11 @@
     videoId: "",
     result: null,
     reactions: new Map(), // moment key -> reaction profile
+    kinds: new Map(), // moment key -> {id, label, hint}
+    quiet: [], // quiet stretches
+    segments: null,
+    clips: [], // existing Twitch clips, if loaded
+    clipMatch: null, // {byMoment, unmatched}
     starred: new Set(), // moment keys (windowStart, in stream seconds)
     notes: new Map(),
     grabber: null,
@@ -122,6 +128,8 @@
         reaction: reactions ? R.describe(reactions) : "",
         reactionShares: reactions ? Object.fromEntries(reactions.types.map((t) => [t.id, Number(t.share.toFixed(2))])) : {},
         ai: explanation && explanation.status === "done" ? explanation.data : null,
+        kind: state.kinds.get(m.windowStart) || null,
+        clips: state.clipMatch ? state.clipMatch.byMoment.get(m.windowStart) || [] : null,
       };
     });
   }
@@ -144,6 +152,9 @@
     state.notes.clear();
     state.explanations.clear();
     state.frames.clear();
+    state.clips = [];
+    state.clipMatch = null;
+    $("#clips-status").textContent = "";
 
     const first = messages[0].timestamp;
     const last = messages[messages.length - 1].timestamp;
@@ -229,9 +240,17 @@
       return;
     }
     state.reactions.clear();
+    state.kinds.clear();
     for (const m of state.result.moments) {
-      state.reactions.set(m.windowStart, R.profile(messagesBetween(m.windowStart, m.windowEnd)));
+      const inside = messagesBetween(m.windowStart, m.windowEnd);
+      const profile = R.profile(inside);
+      state.reactions.set(m.windowStart, profile);
+      state.kinds.set(m.windowStart, I.momentKind(inside, profile));
     }
+    const windowSeconds = settings().windowSeconds;
+    state.quiet = I.findQuietStretches(state.messages, state.result, { windowSeconds });
+    state.segments = I.segmentScores(state.messages, state.result, { chapters: state.info.chapters || [], quiet: state.quiet });
+    state.clipMatch = state.clips.length ? I.matchClips(state.result.moments, state.clips) : null;
     render();
     loadFrames();
   }
@@ -274,9 +293,57 @@
     );
 
     renderTimeline();
+    renderSegments();
     renderMoments();
+    renderQuiet();
+    renderUnmatchedClips();
     updateExportHint();
     updateAiControls();
+  }
+
+  function renderSegments() {
+    const panel = $("#segments-panel");
+    const data = state.segments;
+    if (!data || data.segments.length < 2) {
+      panel.hidden = true;
+      return;
+    }
+    panel.hidden = false;
+    $("#segments-basis").textContent = data.basis === "chapters"
+      ? "By game / category from the VOD’s chapters · 1.0× = the stream’s normal pace"
+      : "By time block · 1.0× = the stream’s normal pace";
+    const max = Math.max(1.5, ...data.segments.map((s) => s.relative));
+    const host = $("#segments");
+    host.replaceChildren();
+    for (const seg of data.segments) {
+      const bar = el("div", { className: "segment-bar", title: `${seg.perMinute} messages a minute` }, [
+        el("span", { className: seg.relative >= 1.25 ? "hot" : "" }),
+        el("i"),
+      ]);
+      bar.firstChild.style.width = `${Math.min(100, (seg.relative / max) * 100)}%`;
+      bar.lastChild.style.left = `${(1 / max) * 100}%`;
+      const meta = el("span", { className: "segment-meta" }, [
+        el("b", { textContent: `${seg.relative.toFixed(1)}×` }),
+        ` · ${A.clock(seg.duration)} · ${seg.momentCount} moment${seg.momentCount === 1 ? "" : "s"}`,
+        seg.quietSeconds >= 60 ? ` · ${Math.round(seg.quietSeconds / 60)} min quiet` : "",
+      ]);
+      host.append(el("div", { className: "segment" }, [el("span", { className: "segment-title", textContent: seg.title, title: seg.title }), bar, meta]));
+    }
+  }
+
+  function renderUnmatchedClips() {
+    const section = $("#unclipped-section");
+    const list = $("#unmatched-clips");
+    list.replaceChildren();
+    const clips = state.clipMatch ? state.clipMatch.unmatched.slice(0, 8) : [];
+    section.hidden = clips.length === 0;
+    for (const clip of clips) {
+      list.append(el("li", {}, [
+        el("b", { textContent: A.clock(clip.start) }),
+        clip.url ? el("a", { href: clip.url, target: "_blank", rel: "noopener noreferrer", textContent: clip.title || "Untitled clip" }) : clip.title,
+        el("span", { className: "hint", textContent: `${clip.views.toLocaleString()} views${clip.creator ? ` · by ${clip.creator}` : ""}` }),
+      ]));
+    }
   }
 
   function renderMoments() {
@@ -304,6 +371,33 @@
           textContent: ` · ${moment.messageCount} messages${moment.uniqueChatters ? ` from ${moment.uniqueChatters} chatters` : ""} · ${A.clock(moment.windowEnd - moment.windowStart)} burst`,
         }),
       );
+
+      // Spike type
+      const badge = $(".kind-badge", card);
+      if (moment.kind) {
+        badge.textContent = moment.kind.label;
+        badge.dataset.kind = moment.kind.id;
+        badge.title = moment.kind.hint;
+      } else {
+        badge.remove();
+      }
+
+      // Existing clips
+      const clipStatus = $(".clip-status", card);
+      if (moment.clips) {
+        clipStatus.hidden = false;
+        if (!moment.clips.length) {
+          clipStatus.classList.add("gem");
+          clipStatus.textContent = "✦ Nobody has clipped this yet";
+        } else {
+          const top = moment.clips[0];
+          clipStatus.append(
+            `Already clipped ${moment.clips.length}× · top: `,
+            top.url ? el("a", { href: top.url, target: "_blank", rel: "noopener noreferrer", textContent: top.title || "clip" }) : top.title,
+            ` (${top.views.toLocaleString()} views)`,
+          );
+        }
+      }
 
       // Reactions
       const reactions = state.reactions.get(key);
@@ -441,7 +535,7 @@
       paintFrames(moment);
       const frames = [];
       try {
-        for (const time of F.frameTimes(moment.peakTime, windowSeconds)) {
+        for (const time of F.frameTimes(moment.onsetTime ?? moment.peakTime, windowSeconds)) {
           const videoTime = time - state.videoOffset;
           if (videoTime < 0 || videoTime > grabber.duration) continue;
           frames.push({ time, dataUrl: await grabber.grab(videoTime) });
@@ -454,13 +548,40 @@
       paintFrames(moment);
       updateAiControls();
     }
+    for (const zone of state.quiet) {
+      const key = quietFrameKey(zone);
+      if (state.frames.has(key)) continue;
+      state.frames.set(key, "loading");
+      paintQuiet(zone);
+      const frames = [];
+      try {
+        for (const time of quietFrameTimes(zone)) {
+          const videoTime = time - state.videoOffset;
+          if (videoTime < 0 || videoTime > grabber.duration) continue;
+          frames.push({ time, dataUrl: await grabber.grab(videoTime) });
+        }
+        if (state.grabber !== grabber) return;
+        state.frames.set(key, frames);
+      } catch (error) {
+        state.frames.set(key, error);
+      }
+      paintQuiet(zone);
+    }
   }
 
   function paintFrames(moment) {
     const card = cardFor(moment.windowStart);
     if (!card) return;
-    const strip = $(".filmstrip", card);
-    const frames = state.frames.get(frameKey(moment));
+    fillStrip($(".filmstrip", card), state.frames.get(frameKey(moment)), {
+      count: F.FRAMES_PER_MOMENT,
+      highlightFrom: moment.onsetTime ?? moment.peakTime,
+      onOpen: (frame) => openFrame(frame, moment),
+      outside: "This moment is outside the video file.",
+    });
+  }
+
+  /** Draws a row of frames, a loading shimmer, or an error into `strip`. */
+  function fillStrip(strip, frames, { count, highlightFrom = Infinity, onOpen, outside }) {
     strip.replaceChildren();
     if (!state.grabber || !frames) {
       strip.hidden = true;
@@ -468,11 +589,11 @@
     }
     strip.hidden = false;
     if (frames === "loading") {
-      for (let i = 0; i < F.FRAMES_PER_MOMENT; i += 1) strip.append(el("div", { className: "placeholder" }));
+      for (let i = 0; i < count; i += 1) strip.append(el("div", { className: "placeholder" }));
       return;
     }
     if (frames instanceof Error || !frames.length) {
-      strip.append(el("p", { className: "hint", textContent: frames instanceof Error ? `Couldn't read frames: ${frames.message}` : "This moment is outside the video file." }));
+      strip.append(el("p", { className: "hint", textContent: frames instanceof Error ? `Couldn't read frames: ${frames.message}` : outside }));
       strip.style.gridTemplateColumns = "1fr";
       return;
     }
@@ -482,8 +603,8 @@
         el("img", { src: frame.dataUrl, alt: `Frame at ${A.clock(frame.time)}`, loading: "lazy" }),
         el("span", { textContent: A.clock(frame.time) }),
       ]);
-      if (frame.time >= moment.peakTime && frame.time < moment.peakTime + settings().windowSeconds) button.classList.add("peak");
-      button.addEventListener("click", () => openFrame(frame, moment));
+      if (frame.time >= highlightFrom) button.classList.add("peak");
+      button.addEventListener("click", () => onOpen(frame));
       strip.append(button);
     }
   }
@@ -491,7 +612,9 @@
   function openFrame(frame, moment) {
     const dialog = $("#frame-viewer");
     $("img", dialog).src = frame.dataUrl;
-    $(".frame-caption", dialog).textContent = `${A.clock(frame.time)} · moment #${moment.rank} (chat peaks at ${A.clock(moment.peakTime)})`;
+    $(".frame-caption", dialog).textContent = moment.rank
+      ? `${A.clock(frame.time)} · moment #${moment.rank} (chat starts rising at ${A.clock(moment.onsetTime ?? moment.peakTime)}, peaks at ${A.clock(moment.peakTime)})`
+      : `${A.clock(frame.time)} · quiet stretch ${A.clock(moment.start)}–${A.clock(moment.end)}`;
     if (dialog.showModal) dialog.showModal();
   }
 
@@ -516,6 +639,11 @@
       button.disabled = explanation?.status === "loading";
       button.textContent = explanation?.status === "done" ? "Re-explain" : "Explain";
     }
+    for (const zone of state.quiet) paintQuietButton(zone);
+    const lag = I.reactionLag(enrichedMoments());
+    $("#ai-lag").textContent = lag
+      ? `Measured from ${lag.count} explained moment${lag.count === 1 ? "" : "s"}: chat starts reacting about ${lag.median}s after the cause (range ${lag.min}–${lag.max}s).`
+      : "";
     const status = $("#ai-status");
     if (state.aiBusy) return;
     if (!state.grabber) status.textContent = "Add the video file to enable explanations.";
@@ -561,7 +689,7 @@
     paintExplanation(moment);
     updateAiControls();
     const windowSeconds = settings().windowSeconds;
-    const chat = messagesBetween(moment.peakTime - F.LOOK_BACK, moment.windowEnd + 5);
+    const chat = messagesBetween((moment.onsetTime ?? moment.peakTime) - F.LOOK_BACK, moment.windowEnd + 5);
     const step = Math.max(1, Math.ceil(chat.length / 80)); // spread the sample across the whole spike
     try {
       const data = await getExplainer().explain(
@@ -583,7 +711,8 @@
 
   async function explainAll() {
     const todo = state.result.moments.filter((m) => framesReady(m) && state.explanations.get(m.windowStart)?.status !== "done");
-    if (!todo.length) {
+    const quietTodo = state.quiet.filter((z) => !z.nearEdge && Array.isArray(state.frames.get(quietFrameKey(z))) && state.explanations.get(quietKey(z))?.status !== "done");
+    if (!todo.length && !quietTodo.length) {
       toast("Every moment with frames is already explained.");
       return;
     }
@@ -599,6 +728,16 @@
         break;
       }
     }
+    const zones = stopMessage ? [] : state.quiet.filter((z) => !z.nearEdge && Array.isArray(state.frames.get(quietFrameKey(z))) && state.explanations.get(quietKey(z))?.status !== "done");
+    for (const [i, zone] of zones.entries()) {
+      $("#ai-status").textContent = `Explaining quiet stretch ${i + 1} of ${zones.length}${providerNote()}…`;
+      await explainQuiet(zone);
+      const result = state.explanations.get(quietKey(zone));
+      if (result?.status === "error" && result.fatal) {
+        stopMessage = result.error;
+        break;
+      }
+    }
     state.aiBusy = false;
     updateAiControls();
     if (stopMessage) $("#ai-status").textContent = `Stopped: ${stopMessage}`;
@@ -607,8 +746,15 @@
   function paintExplanation(moment) {
     const card = cardFor(moment.windowStart);
     if (!card) return;
-    const box = $(".explanation", card);
     const explanation = state.explanations.get(moment.windowStart);
+    fillExplanation($(".explanation", card), explanation, "Looking at the frames and chat…");
+    // Offer the AI title as the note if the person hasn't written one.
+    const d = explanation?.status === "done" ? explanation.data : null;
+    const note = $(".note-input", card);
+    if (d && !note.value && d.title) note.placeholder = `Add a note or clip title… (suggested: ${d.title})`;
+  }
+
+  function fillExplanation(box, explanation, loadingText) {
     box.replaceChildren();
     box.className = "explanation";
     if (!explanation) {
@@ -618,7 +764,7 @@
     box.hidden = false;
     if (explanation.status === "loading") {
       box.classList.add("loading");
-      box.append(el("p", { textContent: "Looking at the frames and chat…" }));
+      box.append(el("p", { textContent: loadingText }));
       return;
     }
     if (explanation.status === "error") {
@@ -627,22 +773,106 @@
       return;
     }
     const d = explanation.data;
+    const quiet = explanation.kind === "quiet";
     const meta = el("div", { className: "meta" }, [
-      el("span", { className: "tag", textContent: d.triggerLabel }),
+      !quiet || d.trigger !== "unclear" ? el("span", { className: "tag", textContent: d.triggerLabel }) : null,
       el("span", { className: `tag ${d.confidence}`, textContent: `${d.confidence} confidence` }),
-      d.causeTime ? el("span", { className: "tag", textContent: `cause ≈ ${d.causeTime}` }) : null,
+      d.causeTime && !quiet ? el("span", { className: "tag", textContent: `cause ≈ ${d.causeTime}` }) : null,
       d.model ? el("span", { className: "tag muted-tag", textContent: d.model }) : null,
     ]);
     box.append(...[
-      el("h4", { textContent: d.title || "What happened" }),
+      el("h4", { textContent: d.title || (quiet ? "What was happening" : "What happened") }),
       meta,
       d.whatHappened ? el("p", { textContent: d.whatHappened }) : null,
-      d.whyChatReacted ? el("p", {}, [el("b", { textContent: "Why chat reacted: " }), d.whyChatReacted]) : null,
+      d.whyChatReacted ? el("p", {}, [el("b", { textContent: quiet ? "Why chat went quiet: " : "Why chat reacted: " }), d.whyChatReacted]) : null,
+      quiet && d.suggestion ? el("p", { className: "suggestion" }, [el("b", { textContent: "Suggestion: " }), d.suggestion]) : null,
       d.evidence.length ? el("ul", {}, d.evidence.map((e) => el("li", { textContent: e }))) : null,
     ].filter(Boolean));
-    // Offer the AI title as the note if the person hasn't written one.
-    const note = $(".note-input", card);
-    if (!note.value && d.title) note.placeholder = `Add a note or clip title… (suggested: ${d.title})`;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Quiet stretches
+  // ---------------------------------------------------------------------------
+
+  const QUIET_FRAMES = 4;
+  const quietKey = (zone) => `q${zone.start}`;
+  const quietFrameKey = (zone) => `${quietKey(zone)}@${state.videoOffset}`;
+  const quietCard = (zone) => $(`.quiet-card[data-key="${quietKey(zone)}"]`);
+
+  function renderQuiet() {
+    const section = $("#quiet-section");
+    const list = $("#quiet-list");
+    list.replaceChildren();
+    section.hidden = state.quiet.length === 0;
+    for (const zone of [...state.quiet].sort((a, b) => a.start - b.start)) {
+      const card = $("#quiet-template").content.firstElementChild.cloneNode(true);
+      card.dataset.key = quietKey(zone);
+      $(".quiet-time", card).textContent = `${A.clock(zone.start)}–${A.clock(zone.end)}`;
+      $(".quiet-stats", card).textContent = `${Math.round(zone.duration / 60)} min at ${Math.round(zone.pace * 100)}% of normal chat · ${zone.messageCount} messages${zone.nearEdge ? " · near the start/end of the stream" : ""}`;
+      const link = $(".watch-link", card);
+      const href = A.vodLink(state.platform, state.videoId, zone.start);
+      if (href) link.href = href;
+      else link.remove();
+      $(".explain-button", card).addEventListener("click", () => explainQuiet(zone));
+      const samples = $(".sample-list", card);
+      for (const sample of zone.samples) {
+        const li = el("li", { title: sample.text });
+        if (sample.author) li.append(el("b", { textContent: sample.author }));
+        li.append(sample.text);
+        samples.append(li);
+      }
+      list.append(card);
+      paintQuiet(zone);
+    }
+  }
+
+  function quietFrameTimes(zone) {
+    return Array.from({ length: QUIET_FRAMES }, (_, i) => zone.start + ((i + 0.5) / QUIET_FRAMES) * zone.duration);
+  }
+
+  function paintQuiet(zone) {
+    const card = quietCard(zone);
+    if (!card) return;
+    fillStrip($(".filmstrip", card), state.frames.get(quietFrameKey(zone)), {
+      count: QUIET_FRAMES,
+      onOpen: (frame) => openFrame(frame, zone),
+      outside: "This stretch is outside the video file.",
+    });
+    fillExplanation($(".explanation", card), state.explanations.get(quietKey(zone)), "Looking at what was happening…");
+    paintQuietButton(zone);
+  }
+
+  function paintQuietButton(zone) {
+    const card = quietCard(zone);
+    if (!card) return;
+    const frames = state.frames.get(quietFrameKey(zone));
+    const button = $(".explain-button", card);
+    const explanation = state.explanations.get(quietKey(zone));
+    button.hidden = !(state.apiKey && Array.isArray(frames) && frames.length);
+    button.disabled = explanation?.status === "loading";
+    button.textContent = explanation?.status === "done" ? "Re-explain" : "Explain";
+  }
+
+  async function explainQuiet(zone) {
+    const frames = state.frames.get(quietFrameKey(zone));
+    if (!Array.isArray(frames) || !frames.length || !state.apiKey) return;
+    const key = quietKey(zone);
+    state.explanations.set(key, { status: "loading", kind: "quiet" });
+    paintQuiet(zone);
+    try {
+      const chat = messagesBetween(zone.start, zone.end);
+      const data = await getExplainer().explain({
+        kind: "quiet",
+        zone,
+        frames,
+        chat,
+        context: { title: state.info.title, channel: state.info.channel },
+      });
+      state.explanations.set(key, { status: "done", kind: "quiet", data });
+    } catch (error) {
+      state.explanations.set(key, { status: "error", kind: "quiet", error: error.message, fatal: Boolean(error.fatal) });
+    }
+    paintQuiet(zone);
   }
 
   // ---------------------------------------------------------------------------
@@ -679,6 +909,9 @@
     const y = (count) => pad.top + plotH - (count / peak) * plotH;
 
     const root = svg("svg", { viewBox: `0 0 ${width} ${height}` });
+    for (const zone of state.quiet) {
+      root.append(svg("rect", { class: "quiet-band", x: x(zone.start), y: pad.top, width: Math.max(1, x(zone.end) - x(zone.start)), height: plotH }));
+    }
     const points = timeline.map((count, i) => `${x(timelineStart + (i + 0.5) * windowSeconds).toFixed(1)},${y(count).toFixed(1)}`);
     root.append(svg("path", { class: "area", d: `M${x(timelineStart)},${y(0)} L${points.join(" L")} L${x(timelineStart + total)},${y(0)} Z` }));
     root.append(svg("path", { class: "line", d: `M${points.join(" L")}` }));
@@ -697,6 +930,16 @@
       axis.append(label);
     }
     root.append(axis);
+
+    for (const clip of state.clips) {
+      if (clip.start < timelineStart || clip.start > timelineStart + total) continue;
+      const cx = x(clip.start + clip.duration / 2);
+      const tick = svg("line", { class: "clip-tick", x1: cx, x2: cx, y1: pad.top + plotH - 14, y2: pad.top + plotH });
+      const title = svg("title");
+      title.textContent = `Clip: ${clip.title} (${clip.views.toLocaleString()} views)`;
+      tick.append(title);
+      root.append(tick);
+    }
 
     const hoverLine = svg("line", { class: "hover-line", y1: pad.top, y2: pad.top + plotH, visibility: "hidden" });
     root.append(hoverLine);
@@ -833,6 +1076,46 @@
   });
   $("#explain-all").addEventListener("click", explainAll);
 
+  // Existing clips
+  dropZone($("#clips-zone"), $("#clips-file"), (file) => {
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const clips = I.parseClips(String(reader.result), state.videoId);
+        state.clips = clips;
+        if (!clips.length) {
+          $("#clips-status").textContent = "No clips with a position in this VOD were found in that file.";
+        } else {
+          const first = state.messages[0]?.timestamp ?? 0;
+          const last = state.messages[state.messages.length - 1]?.timestamp ?? Infinity;
+          const inRange = clips.filter((c) => c.start + c.duration >= first && c.start <= last).length;
+          $("#clips-status").textContent = `✓ ${clips.length} clip${clips.length === 1 ? "" : "s"} loaded · ${inRange} within this chat’s time range.`;
+        }
+        if (state.result) runDetection();
+      } catch (error) {
+        $("#clips-status").textContent = `Couldn't read that file: ${error instanceof SyntaxError ? "it isn't valid JSON" : error.message}`;
+      }
+    };
+    reader.readAsText(file);
+  });
+
+  // Editor markers
+  function editorOptions() {
+    return {
+      videoOffset: state.videoOffset,
+      fps: Number($("#export-fps").value),
+      title: state.info.title ? `${state.info.channel ? `${state.info.channel} - ` : ""}${state.info.title}` : "Viewtopsy markers",
+      videoName: state.grabber?.file?.name || (state.videoId ? `${state.videoId}.mp4` : "video.mp4"),
+      videoDuration: state.grabber?.duration || 0,
+    };
+  }
+  $("#download-edl").addEventListener("click", () => {
+    download(`${fileStem()}-resolve-markers.edl`, I.toResolveEdl(exportableMoments(), editorOptions()), "text/plain");
+  });
+  $("#download-xml").addEventListener("click", () => {
+    download(`${fileStem()}-markers.xml`, I.toPremiereXml(exportableMoments(), editorOptions()), "application/xml");
+  });
+
   // Export
   $("#copy-chapters").addEventListener("click", () => {
     copyText(A.toChapters(exportableMoments())).then(() => toast("Chapters copied to clipboard"));
@@ -849,6 +1132,12 @@
       videoId: state.videoId || null,
       settings: settings(),
       moments: exportableMoments().map((m) => ({ ...m, link: A.vodLink(state.platform, state.videoId, m.timestamp) })),
+      quietStretches: state.quiet.map((z) => ({
+        ...z,
+        link: A.vodLink(state.platform, state.videoId, z.start),
+        ai: state.explanations.get(quietKey(z))?.status === "done" ? state.explanations.get(quietKey(z)).data : null,
+      })),
+      segments: state.segments,
     };
     download(`${fileStem()}.json`, JSON.stringify(payload, null, 2), "application/json");
   });

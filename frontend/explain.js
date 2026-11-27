@@ -75,6 +75,7 @@
    *   context: {title, channel}
    */
   function buildPrompt(input) {
+    if (input.kind === "quiet") return buildQuietPrompt(input);
     const { moment, frames, chat, reactions, context = {} } = input;
     const reactionLine = reactions && reactions.types.length
       ? reactions.types.slice(0, 4).map((t) => `${t.label} ${Math.round(t.share * 100)}%`).join(", ")
@@ -114,6 +115,41 @@
         '  "evidence": ["2-4 short points: what you saw in which frame, or what chat said"]',
         "}",
         "Use low confidence when the frames don't clearly show the cause. Don't invent details you can't see or read.",
+      ].join("\n"),
+    });
+    return parts;
+  }
+
+  /** Prompt for a quiet stretch: what was going on while chat went silent. */
+  function buildQuietPrompt(input) {
+    const { zone, frames, chat, context = {} } = input;
+    const intro = [
+      "You are helping a streamer understand where their stream lost its audience's attention.",
+      context.title ? `Stream: "${context.title}"${context.channel ? ` by ${context.channel}` : ""}.` : "",
+      `From ${clock(zone.start)} to ${clock(zone.end)} (${Math.round(zone.duration / 60)} minutes) chat ran at only ${Math.round(zone.pace * 100)}% of its normal pace.`,
+      `Below are ${frames.length} frames spread across that stretch, then the few chat messages sent during it.`,
+      "You cannot hear audio; if the frames don't show why, say so.",
+    ].filter(Boolean).join(" ");
+    const parts = [{ text: intro }];
+    for (const frame of frames) {
+      parts.push({ text: `Frame at ${clock(frame.time)}:` });
+      parts.push({ image: frame.dataUrl.replace(/^data:image\/\w+;base64,/, "") });
+    }
+    const chatLines = chat.slice(0, 40).map((m) => `[${clock(m.timestamp)}] ${m.author ? `${m.author}: ` : ""}${String(m.text).slice(0, 140)}`).join("\n");
+    parts.push({
+      text: [
+        `Chat during the stretch:\n${chatLines || "(almost nothing)"}`,
+        "",
+        "Reply with only a JSON object, no other text:",
+        "{",
+        '  "title": "what was happening, max 8 words (e.g. \"Long loading screen\", \"Reading donations quietly\")",',
+        '  "what_happened": "one or two sentences on what was on screen",',
+        '  "why_chat_reacted": "one sentence on why chat likely went quiet",',
+        '  "suggestion": "one practical suggestion for the streamer or editor (cut it, speed it up, add commentary...)",',
+        `  "trigger": one of ${JSON.stringify(Object.keys(TRIGGERS))},`,
+        '  "confidence": "low" | "medium" | "high",',
+        '  "evidence": ["2-3 short points from the frames or chat"]',
+        "}",
       ].join("\n"),
     });
     return parts;
@@ -164,6 +200,7 @@
       triggerLabel: TRIGGERS[trigger],
       causeTime: typeof data.cause_time === "string" ? data.cause_time.slice(0, 12) : null,
       confidence,
+      suggestion: str(data.suggestion, 300),
       evidence: Array.isArray(data.evidence) ? data.evidence.filter((e) => typeof e === "string").slice(0, 5).map((e) => e.slice(0, 200)) : [],
     };
   }
@@ -317,7 +354,7 @@
       },
       async explain(input) {
         if (!key) throw new Error("Add an API key first.");
-        if (!input.frames.length) throw new Error("No frames to look at. Add the video file first.");
+        if (!input.frames || !input.frames.length) throw new Error("No frames to look at. Add the video file first.");
 
         if (provider === "anthropic") {
           const id = chosen || MODELS[0].id;

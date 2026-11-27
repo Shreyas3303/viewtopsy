@@ -1,6 +1,8 @@
 # Viewtopsy
 
-**Find the moments your chat loved.** Viewtopsy reads a Twitch or YouTube chat replay, spots the bursts where chat went wild, and gives you a ranked list of timestamps that are worth clipping.
+**Find the moments your chat loved.** Viewtopsy reads a Twitch or YouTube chat replay, spots the bursts where chat went wild, works out why, shows where chat went quiet, and tells you which moments nobody has clipped yet.
+
+**Who it's for:** clippers and editors working through someone's VOD, and streamers who want to know what actually lands with their chat. Twitch and YouTube now cut automatic highlight clips for the streamer; Viewtopsy is for understanding a stream and getting its moments into your editor, on any public VOD.
 
 It runs entirely in your browser. Chat files are never uploaded anywhere, and no account or API key is needed.
 
@@ -41,8 +43,13 @@ The sample is a made-up 2-hour stream with nine planted events (a raid, a jump s
   - An Anthropic key (`sk-ant-…`) works too and uses Claude.
   - The key type is detected automatically. You can still pick a specific model in the menu.
   - Explanations work when you open `frontend/index.html` yourself. Hosted previews that block outside connections can't reach the AI.
+- **Spike type** for every moment: *organic reaction*, *prompted* (chat answering a question or voting), *alert-driven* (subs, gifts, raids), *copypasta / spam wave*, or *hellos / goodbyes*. Prompted and alert spikes look big but tell you less about the content.
+- **Where chat went quiet:** stretches of 3+ minutes where chat ran well below its normal pace, shaded on the chart and listed with frames. With an API key, the AI says what was happening and suggests what to do about it (cut it, speed it up…).
+- **How each part of the stream did:** engagement per game or category, from the VOD's chapters (TwitchDownloader exports include them), or per time block.
+- **Already clipped or not:** add the VOD's Twitch clips (see `fetch-clips` below) and each moment shows whether it's already clipped and how popular the top clip is. Moments nobody clipped are marked ✦. Clips where chat stayed calm are listed separately.
 - **Stars and notes** so you can shortlist moments and name your clips.
 - **Exports**: copy as YouTube chapters, or download CSV / JSON. If you starred anything, only starred moments are exported.
+- **Markers for editing software**: a DaVinci Resolve marker file (Timeline › Import › Timeline Markers from EDL) and a Final Cut Pro 7 XML for Premiere Pro (File › Import; locate the video when asked). Markers line up with your video file, are colour-coded by spike type in Resolve, and carry the AI title and summary.
 
 ## How detection works
 
@@ -50,6 +57,7 @@ The sample is a made-up 2-hour stream with nine planted events (a raid, a jump s
 2. Each window is compared with the stream's average using a z-score (how many standard deviations above normal it is).
 3. Windows above the threshold, with at least the minimum number of messages, become moments. Back-to-back windows merge into one moment.
 4. Each moment's timestamp is set one window *before* its peak, so playback catches the build-up instead of starting mid-reaction.
+5. Viewtopsy also finds where chat **starts rising** (up to 30 seconds before the peak). Frames for the AI are taken from 25 seconds before that point to the end of that first rising window, spaced more tightly near the rise, since chat reacts a few seconds after the cause. Once you've explained some moments, the app shows the measured gap between cause and reaction for that stream.
 
 A spike usually means something happened, but not always (a giveaway or a chat argument also spikes), so give each moment a quick look before clipping.
 
@@ -72,6 +80,7 @@ Other commands (these need extra tools or API keys, see `.env.example`):
 
 | Command | Needs |
 | --- | --- |
+| `stream-moments fetch-clips --id VOD` | Twitch API keys in `.env`; saves `data/clips/VOD.json` for the clip comparison |
 | `stream-moments fetch-twitch-chat --id VOD --output chat.json` | `TwitchDownloaderCLI` on your PATH |
 | `stream-moments download --url URL` | `yt-dlp` |
 | `stream-moments metadata --platform twitch --id VOD` | Twitch or YouTube API keys in `.env` |
@@ -87,6 +96,7 @@ frontend/            Browser app (no build step)
   app.js             Interface
   analysis.js        Detection, parsing and export (shared with tests)
   reactions.js       Emote-aware reaction reading
+  insights.js        Spike types, quiet stretches, segments, clips, editor markers
   frames.js          Grabs frames from a local video file
   explain.js         Gemini/Claude requests, model choice and reading answers
   sample.js          Generates the demo stream

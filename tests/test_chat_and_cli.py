@@ -90,3 +90,64 @@ def test_loads_yt_dlp_live_chat():
     messages = load_chat(ROOT / "tests" / "fixtures" / "yt-dlp.live_chat.json")
     # Membership item (no text) and the pre-stream message are dropped.
     assert [(m.timestamp, m.author, m.text) for m in messages] == [(4.2, "Amy", "hello :wave:"), (9.0, "Bob", "great stream")]
+
+
+class _FakeResponse:
+    def __init__(self, body):
+        self._body = body
+
+    def raise_for_status(self):
+        pass
+
+    def json(self):
+        return self._body
+
+
+class _FakeTwitch:
+    """Stands in for `requests`: one VOD, clips over two pages, one from another VOD."""
+
+    def __init__(self):
+        self.calls = []
+
+    def post(self, url, **kwargs):
+        return _FakeResponse({"access_token": "tok"})
+
+    def get(self, url, params=None, headers=None, **kwargs):
+        self.calls.append((url, dict(params or {})))
+        if url.endswith("/videos"):
+            return _FakeResponse({"data": [{"id": "2939504732", "user_id": "641972806", "user_name": "KaiCenat", "title": "KAI VS SPEED", "created_at": "2026-11-24T17:36:25Z"}]})
+        if (params or {}).get("after") is None:
+            return _FakeResponse({"data": [
+                {"id": "A", "url": "u", "title": "late", "view_count": 5, "vod_offset": 5000, "duration": 30, "creator_name": "x", "created_at": "c", "video_id": "2939504732"},
+                {"id": "B", "url": "u", "title": "other vod", "view_count": 9, "vod_offset": 10, "duration": 30, "creator_name": "x", "created_at": "c", "video_id": "1"},
+            ], "pagination": {"cursor": "next"}})
+        return _FakeResponse({"data": [
+            {"id": "C", "url": "u", "title": "early", "view_count": 50, "vod_offset": 3700, "duration": 20, "creator_name": "y", "created_at": "c", "video_id": "2939504732"},
+            {"id": "D", "url": "u", "title": "no offset", "view_count": 1, "vod_offset": None, "duration": 20, "creator_name": "y", "created_at": "c", "video_id": "2939504732"},
+        ], "pagination": {}})
+
+
+def test_fetch_clips_keeps_this_vods_clips_in_order(tmp_path, monkeypatch, capsys):
+    from stream_moments import platforms
+
+    fake = _FakeTwitch()
+    monkeypatch.setattr(platforms, "_requests", lambda: fake)
+    monkeypatch.setenv("TWITCH_CLIENT_ID", "id")
+    monkeypatch.setenv("TWITCH_CLIENT_SECRET", "secret")
+    output = tmp_path / "clips.json"
+    assert main(["fetch-clips", "--id", "2939504732", "--output", str(output)]) == 0
+    saved = json.loads(output.read_text())
+    assert [c["id"] for c in saved["clips"]] == ["C", "A", "D"]
+    assert saved["channel"] == "KaiCenat"
+    clip_calls = [params for url, params in fake.calls if url.endswith("/clips")]
+    assert clip_calls[0]["broadcaster_id"] == "641972806" and clip_calls[0]["started_at"] == "2026-11-24T17:36:25Z"
+    assert clip_calls[1]["after"] == "next"
+    assert "3 clips" in capsys.readouterr().out
+
+
+def test_fetch_clips_needs_credentials(monkeypatch, capsys, tmp_path):
+    monkeypatch.chdir(tmp_path)  # no .env here
+    monkeypatch.delenv("TWITCH_CLIENT_ID", raising=False)
+    monkeypatch.delenv("TWITCH_CLIENT_SECRET", raising=False)
+    assert main(["fetch-clips", "--id", "1"]) == 2
+    assert "TWITCH_CLIENT_ID" in capsys.readouterr().err

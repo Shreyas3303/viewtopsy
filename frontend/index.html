@@ -19,7 +19,7 @@
         <div class="hero">
           <p class="eyebrow">Twitch + YouTube VODs</p>
           <h1>Find the moments<br /><em>your chat loved.</em></h1>
-          <p class="lede">Drop in a chat replay and Viewtopsy shows you where chat went wild, ranked and ready to clip.</p>
+          <p class="lede">For clippers, editors and streamers: drop in a VOD’s chat and see where chat went wild, why it did, where it went quiet, and which moments nobody has clipped yet.</p>
         </div>
 
         <form id="setup-form" class="panel setup-form" novalidate>
@@ -84,6 +84,15 @@
           <div id="timeline" class="timeline" role="img" aria-label="Chat activity over the stream"></div>
           <div id="timeline-tooltip" class="timeline-tooltip" hidden></div>
           <p id="chat-overall" class="chat-overall"></p>
+          <p class="chart-key hint"><span class="key-quiet"></span> quiet stretch <span class="key-clip"></span> existing clip</p>
+        </div>
+
+        <div class="panel segments-panel" id="segments-panel" hidden>
+          <div class="timeline-head">
+            <h3>How each part of the stream did</h3>
+            <span class="hint" id="segments-basis"></span>
+          </div>
+          <div id="segments" class="segments"></div>
         </div>
 
         <!-- ============ Video + AI ============ -->
@@ -118,6 +127,16 @@
               <button id="explain-all" class="primary-button small" type="button" disabled>Explain all moments</button>
             </div>
             <p id="ai-status" class="hint" aria-live="polite"></p>
+            <p id="ai-lag" class="hint"></p>
+          </div>
+          <div class="insight-block">
+            <h3>Compare with existing clips <span class="optional">optional</span></h3>
+            <p class="hint">Add the VOD’s Twitch clips to see which moments are already clipped and which nobody has clipped yet. Get them with <code>stream-moments fetch-clips</code> (see README).</p>
+            <label class="upload-zone compact" id="clips-zone" for="clips-file">
+              <input id="clips-file" type="file" accept=".json,application/json" />
+              <span><strong>Drop a clips file here</strong> or click to choose</span>
+            </label>
+            <p id="clips-status" class="hint" aria-live="polite"></p>
           </div>
         </div>
 
@@ -165,6 +184,22 @@
 
         <div id="moment-list" class="moment-list"></div>
 
+        <section id="quiet-section" class="quiet-section" hidden>
+          <div class="section-head">
+            <h3>Where chat went quiet</h3>
+            <p class="hint">Stretches of 3+ minutes where chat ran well below its normal pace. Good candidates to cut, or to learn what loses the audience.</p>
+          </div>
+          <div id="quiet-list" class="quiet-list"></div>
+        </section>
+
+        <section id="unclipped-section" class="quiet-section" hidden>
+          <div class="section-head">
+            <h3>Clipped, but chat didn’t spike</h3>
+            <p class="hint">Popular clips where chat stayed calm. Often moments chat missed or reacted to slowly.</p>
+          </div>
+          <ul id="unmatched-clips" class="clip-list"></ul>
+        </section>
+
         <div class="export panel">
           <div>
             <h3>Export</h3>
@@ -175,6 +210,20 @@
             <button id="download-csv" class="secondary-button" type="button">Download CSV</button>
             <button id="download-json" class="secondary-button" type="button">Download JSON</button>
           </div>
+          <div class="export-editors">
+            <span class="tool-label">Markers for editing software</span>
+            <label class="field inline">Frame rate
+              <select id="export-fps">
+                <option value="24">24</option>
+                <option value="25">25</option>
+                <option value="30" selected>30</option>
+                <option value="60">60</option>
+              </select>
+            </label>
+            <button id="download-edl" class="secondary-button" type="button">DaVinci Resolve (.edl)</button>
+            <button id="download-xml" class="secondary-button" type="button">Premiere Pro (.xml)</button>
+            <p class="hint">Marker times line up with your video file (using “Video starts at”). Resolve: Timeline › Import › Timeline Markers from EDL. Premiere: File › Import the .xml, then locate the video when asked.</p>
+          </div>
         </div>
       </section>
 
@@ -184,6 +233,22 @@
     </main>
 
     <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+
+    <template id="quiet-template">
+      <article class="quiet-card panel">
+        <div class="quiet-head">
+          <strong class="quiet-time"></strong>
+          <span class="quiet-stats hint"></span>
+          <div class="moment-actions">
+            <button class="explain-button secondary-button small" type="button" hidden>Explain</button>
+            <a class="watch-link secondary-button small" target="_blank" rel="noopener noreferrer">Watch ↗</a>
+          </div>
+        </div>
+        <div class="filmstrip" hidden></div>
+        <div class="explanation" hidden></div>
+        <ul class="sample-list"></ul>
+      </article>
+    </template>
 
     <dialog id="frame-viewer" class="frame-viewer">
       <img alt="" />
@@ -208,11 +273,13 @@
             </div>
           </div>
           <div class="reaction-row">
+            <span class="kind-badge"></span>
             <span class="reaction-summary"></span>
             <ul class="reaction-chips"></ul>
           </div>
           <div class="filmstrip" hidden></div>
           <div class="explanation" hidden></div>
+          <p class="clip-status" hidden></p>
           <ul class="keyword-list"></ul>
           <ul class="sample-list"></ul>
           <input class="note-input" type="text" maxlength="80" placeholder="Add a note or clip title…" aria-label="Note for this moment" />
@@ -222,6 +289,7 @@
 
     <script src="analysis.js"></script>
     <script src="reactions.js"></script>
+    <script src="insights.js"></script>
     <script src="frames.js"></script>
     <script src="explain.js"></script>
     <script src="sample.js"></script>

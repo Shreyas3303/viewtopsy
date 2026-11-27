@@ -6,10 +6,13 @@
 (function (root) {
   "use strict";
 
-  /** Seconds before a chat peak to start looking: chat reacts a few seconds after the cause. */
-  const LOOK_BACK = 20;
-  const LOOK_AHEAD = 4;
-  const FRAMES_PER_MOMENT = 6;
+  /**
+   * Frames cover LOOK_BACK seconds before chat starts rising to the end of that
+   * first rising window. Chat reacts a few seconds after the cause (stream
+   * delay plus reading and typing), so the cause is usually in this span.
+   */
+  const LOOK_BACK = 25;
+  const FRAMES_PER_MOMENT = 8;
 
   class FrameGrabber {
     constructor(file) {
@@ -71,15 +74,15 @@
   }
 
   /**
-   * Which moments of the stream to capture for a moment, in stream seconds.
-   * Spread from LOOK_BACK seconds before the chat peak to just after it.
+   * Stream times to capture for a moment. Spacing gets tighter toward the
+   * point where chat starts rising, where the cause most often is.
+   * @param onsetTime when chat started rising (stream seconds)
    */
-  function frameTimes(peakTime, windowSeconds, count = FRAMES_PER_MOMENT) {
-    const end = peakTime + windowSeconds / 2 + LOOK_AHEAD;
-    const start = peakTime - LOOK_BACK;
-    const step = (end - start) / (count - 1);
-    return Array.from({ length: count }, (_, i) => start + i * step);
+  function frameTimes(onsetTime, windowSeconds, count = FRAMES_PER_MOMENT) {
+    const start = onsetTime - LOOK_BACK;
+    const end = onsetTime + windowSeconds * 0.8;
+    return Array.from({ length: count }, (_, i) => start + (end - start) * Math.sqrt(i / (count - 1)));
   }
 
-  root.ViewtopsyFrames = { FrameGrabber, frameTimes, LOOK_BACK, LOOK_AHEAD, FRAMES_PER_MOMENT };
+  root.ViewtopsyFrames = { FrameGrabber, frameTimes, LOOK_BACK, FRAMES_PER_MOMENT };
 })(typeof self !== "undefined" ? self : this);

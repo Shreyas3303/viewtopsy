@@ -9,7 +9,9 @@ from .analyzer import SENSITIVITY, find_moments
 from .chat import load_chat
 from .config import Settings
 from .media import download_video, extract_frame, fetch_twitch_chat
-from .platforms import get_metadata
+import json
+
+from .platforms import get_metadata, twitch_vod_clips
 from .reports import write_reports
 from .vision import ClipClassifier, attribute_reaction, gemini_explanation
 
@@ -53,6 +55,17 @@ def _metadata(args: argparse.Namespace) -> int:
     return 0
 
 
+def _fetch_clips(args: argparse.Namespace) -> int:
+    result = twitch_vod_clips(args.id, Settings.from_environment())
+    output = Path(args.output)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text(json.dumps(result, indent=2), encoding="utf-8")
+    placed = sum(1 for clip in result["clips"] if clip["vod_offset"] is not None)
+    print(f"Saved {len(result['clips'])} clips from VOD {args.id} ({placed} with a position in the VOD) to {output}")
+    print("Drop this file into Viewtopsy under 'Compare with existing clips'.")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="stream-moments", description="Viewtopsy: find high-engagement Twitch/YouTube stream moments.")
     commands = parser.add_subparsers(dest="command", required=True)
@@ -75,6 +88,10 @@ def build_parser() -> argparse.ArgumentParser:
     metadata.add_argument("--platform", choices=("twitch", "youtube"), required=True)
     metadata.add_argument("--id", required=True)
     metadata.set_defaults(handler=_metadata)
+    clips = commands.add_parser("fetch-clips", help="Save the Twitch clips made from a VOD, for Viewtopsy's clip comparison.")
+    clips.add_argument("--id", required=True, help="Twitch VOD ID")
+    clips.add_argument("--output", default=None, help="Where to save (default: data/clips/<id>.json)")
+    clips.set_defaults(handler=lambda args: _fetch_clips(argparse.Namespace(id=args.id, output=args.output or f"data/clips/{args.id}.json")))
     twitch_chat = commands.add_parser("fetch-twitch-chat", help="Download Twitch VOD chat with TwitchDownloaderCLI.")
     twitch_chat.add_argument("--id", required=True)
     twitch_chat.add_argument("--output", required=True)
