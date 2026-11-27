@@ -309,14 +309,14 @@
   function renderSegments() {
     const panel = $("#segments-panel");
     const data = state.segments;
-    if (!data || data.segments.length < 2) {
+    // Only real chapters (game/category changes) mean something; equal time
+    // blocks are arbitrary, so they aren't shown.
+    if (!data || data.basis !== "chapters" || data.segments.length < 2) {
       panel.hidden = true;
       return;
     }
     panel.hidden = false;
-    $("#segments-basis").textContent = data.basis === "chapters"
-      ? "By game / category from the VOD’s chapters · 1.0× = the stream’s normal pace"
-      : "By time block · 1.0× = the stream’s normal pace";
+    $("#segments-basis").textContent = "By game / category from the VOD’s chapters · 1.0× = the stream’s normal pace";
     const max = Math.max(1.5, ...data.segments.map((s) => s.relative));
     const host = $("#segments");
     host.replaceChildren();
