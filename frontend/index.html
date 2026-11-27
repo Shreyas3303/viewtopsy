@@ -10,7 +10,10 @@
   <body>
     <header class="site-header">
       <a class="brand" href="#top" aria-label="Viewtopsy home"><span class="brand-mark" aria-hidden="true">◆</span> Viewtopsy</a>
-      <span class="header-note">Runs in your browser · nothing is uploaded</span>
+      <nav class="tabs" aria-label="Sections">
+        <button type="button" class="tab" data-view="analyze" aria-current="page">Analyze</button>
+        <button type="button" class="tab" data-view="profile">Profile</button>
+      </nav>
     </header>
 
     <main id="top" class="shell">
@@ -113,17 +116,10 @@
           </div>
           <div class="insight-block">
             <h3>Explain moments with AI <span class="optional">optional</span></h3>
-            <p class="hint">Sends each moment’s frames and chat to an AI model, which says what happened and why chat reacted. Paste a free <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Google Gemini key</a> (or an Anthropic key). Only moments you explain are sent.</p>
-            <div class="ai-grid">
-              <label class="field">API key
-                <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="AIza… (Gemini) or sk-ant-…" />
-              </label>
-              <label class="field">Model
-                <select id="ai-model"></select>
-              </label>
-            </div>
+            <p class="hint">Sends each moment’s frames and chat to an AI model, which says what happened and why chat reacted. Only what you explain is sent.</p>
+            <p id="ai-summary" class="ai-summary"></p>
             <div class="ai-actions">
-              <label class="check"><input id="remember-key" type="checkbox" /> Remember key on this device</label>
+              <button type="button" class="text-button" data-go="profile">AI settings in Profile</button>
               <button id="explain-all" class="primary-button small" type="button" disabled>Explain all moments</button>
             </div>
             <p id="ai-status" class="hint" aria-live="polite"></p>
@@ -212,17 +208,116 @@
           </div>
           <div class="export-editors">
             <span class="tool-label">Markers for editing software</span>
-            <label class="field inline">Frame rate
-              <select id="export-fps">
-                <option value="24">24</option>
-                <option value="25">25</option>
-                <option value="30" selected>30</option>
-                <option value="60">60</option>
-              </select>
-            </label>
+            <span id="export-fps-note" class="hint"></span>
             <button id="download-edl" class="secondary-button" type="button">DaVinci Resolve (.edl)</button>
             <button id="download-xml" class="secondary-button" type="button">Premiere Pro (.xml)</button>
             <p class="hint">Marker times line up with your video file (using “Video starts at”). Resolve: Timeline › Import › Timeline Markers from EDL. Premiere: File › Import the .xml, then locate the video when asked.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- ============ Profile ============ -->
+      <section id="profile-view" class="profile-view" hidden aria-labelledby="profile-title">
+        <div class="results-head">
+          <div>
+            <p class="eyebrow">Saved in this browser</p>
+            <h2 id="profile-title">Profile</h2>
+          </div>
+          <span id="profile-saved" class="hint" aria-live="polite"></span>
+        </div>
+        <p class="hint">Everything here is kept on this device and applied to every analysis, so the Analyze page can stay focused on the stream. Changes save as you type.</p>
+
+        <div class="panel profile-panel">
+          <h3>AI explanations</h3>
+          <div class="profile-grid">
+            <label class="field">API key
+              <input id="api-key" type="password" autocomplete="off" spellcheck="false" placeholder="AIza… (Gemini) or sk-ant-…" />
+            </label>
+            <label class="field">Model
+              <select id="ai-model"></select>
+            </label>
+          </div>
+          <label class="check"><input id="remember-key" type="checkbox" /> Remember the key on this device (otherwise it's forgotten when you close the tab)</label>
+          <p class="hint">Free key: <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer">Google AI Studio</a>. An Anthropic key (<code>sk-ant-…</code>) works too. The provider is detected from the key, and “Automatic” picks the best model your key can use.</p>
+          <p id="ai-key-status" class="hint"></p>
+        </div>
+
+        <div class="panel profile-panel">
+          <h3>Your channel</h3>
+          <div class="profile-grid">
+            <label class="field">Channel name
+              <input id="channel-name" maxlength="60" autocomplete="off" placeholder="e.g. CDawg" />
+            </label>
+            <label class="field">Main platform
+              <select id="channel-platform">
+                <option value="twitch">Twitch</option>
+                <option value="youtube">YouTube</option>
+              </select>
+            </label>
+          </div>
+          <label class="field">About the channel
+            <textarea id="channel-about" rows="3" maxlength="600" placeholder="e.g. Variety streamer, mostly co-streams with Gigguk, anime and food content. Running jokes: …"></textarea>
+          </label>
+          <p class="hint">Given to the AI as background, so explanations know the regulars, running jokes and usual content.</p>
+        </div>
+
+        <div class="panel profile-panel">
+          <h3>Channel emotes</h3>
+          <p class="hint">Tell Viewtopsy what your channel’s own emotes mean, so they count toward the right reaction. One per line: <code>emote = reaction</code>. Reactions: <span id="reaction-names"></span>.</p>
+          <textarea id="emote-lines" rows="6" spellcheck="false" placeholder="kaicFireMGM = hype&#10;cdawgBonk = laughter"></textarea>
+          <p id="emote-errors" class="hint error-text" aria-live="polite"></p>
+          <div id="emote-suggestions" class="emote-suggestions" hidden>
+            <p class="hint"><b>Emotes in your last chat file that Viewtopsy can’t read yet.</b> Pick a reaction to add one.</p>
+            <ul id="emote-suggestion-list"></ul>
+          </div>
+        </div>
+
+        <div class="panel profile-panel">
+          <h3>Defaults</h3>
+          <div class="profile-grid four">
+            <label class="field">Sensitivity
+              <select id="default-sensitivity">
+                <option value="low">Fewer moments</option>
+                <option value="medium">Balanced</option>
+                <option value="high">More moments</option>
+              </select>
+            </label>
+            <label class="field">Window length
+              <select id="default-window">
+                <option value="10">10 seconds</option>
+                <option value="15">15 seconds</option>
+                <option value="30">30 seconds</option>
+                <option value="60">60 seconds</option>
+              </select>
+            </label>
+            <label class="field">Min. messages per window
+              <input id="default-min" type="number" min="1" max="10000" />
+            </label>
+            <label class="field">Order
+              <select id="default-sort">
+                <option value="rank">Biggest first</option>
+                <option value="time">By time</option>
+              </select>
+            </label>
+            <label class="field">Editor frame rate
+              <select id="default-fps">
+                <option value="24">24 fps</option>
+                <option value="25">25 fps</option>
+                <option value="30">30 fps</option>
+                <option value="60">60 fps</option>
+              </select>
+            </label>
+          </div>
+          <p class="hint">Used for each new analysis. You can still change sensitivity and order on the Analyze page for one stream.</p>
+        </div>
+
+        <div class="panel profile-panel">
+          <h3>Backup</h3>
+          <p class="hint">Your profile lives in this browser only. Save a copy to move it to another browser or computer. The API key is never included.</p>
+          <div class="export-actions">
+            <button id="profile-export" class="secondary-button" type="button">Save profile file</button>
+            <label class="secondary-button" for="profile-import-file">Load profile file<input id="profile-import-file" type="file" accept=".json,application/json" hidden /></label>
+            <button id="profile-reset" class="secondary-button danger" type="button">Reset profile</button>
           </div>
         </div>
       </section>
@@ -290,6 +385,7 @@
     <script src="analysis.js"></script>
     <script src="reactions.js"></script>
     <script src="insights.js"></script>
+    <script src="profile.js"></script>
     <script src="frames.js"></script>
     <script src="explain.js"></script>
     <script src="sample.js"></script>

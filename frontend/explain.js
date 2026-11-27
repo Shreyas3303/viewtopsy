@@ -89,6 +89,7 @@
     const intro = [
       "You are helping a video editor understand a livestream moment.",
       context.title ? `Stream: "${context.title}"${context.channel ? ` by ${context.channel}` : ""}.` : "",
+      context.about ? `About the channel (from the streamer's profile): ${String(context.about).slice(0, 600)}` : "",
       `Chat spiked to ${moment.intensity}x its normal pace around ${clock(moment.peakTime)} (${moment.messageCount} messages between ${clock(moment.windowStart)} and ${clock(moment.windowEnd)}).`,
       `Chat's reaction, read from emotes and phrases: ${reactionLine}.`,
       `Below are ${frames.length} frames from the video in time order, covering the seconds before and during the spike. Chat usually reacts 3-15 seconds after what caused it.`,
@@ -126,6 +127,7 @@
     const intro = [
       "You are helping a streamer understand where their stream lost its audience's attention.",
       context.title ? `Stream: "${context.title}"${context.channel ? ` by ${context.channel}` : ""}.` : "",
+      context.about ? `About the channel (from the streamer's profile): ${String(context.about).slice(0, 600)}` : "",
       `From ${clock(zone.start)} to ${clock(zone.end)} (${Math.round(zone.duration / 60)} minutes) chat ran at only ${Math.round(zone.pace * 100)}% of its normal pace.`,
       `Below are ${frames.length} frames spread across that stretch, then the few chat messages sent during it.`,
       "You cannot hear audio; if the frames don't show why, say so.",

@@ -129,12 +129,32 @@
     return [token, token.replace(/(.)\1{2,}/gi, "$1"), token.replace(/(.)\1{2,}/gi, "$1$1")];
   }
 
+  // Channel emotes the person has told us about: lowercased token -> type id.
+  let custom = new Map();
+
+  /**
+   * Teaches the reader channel emotes, e.g. {"kaicFireMGM": "hype"}.
+   * Unknown type ids are ignored. Replaces any previous custom emotes.
+   */
+  function setCustomEmotes(map) {
+    custom = new Map();
+    for (const [token, id] of Object.entries(map || {})) {
+      if (BY_ID[id] && String(token).trim()) custom.set(String(token).trim().toLowerCase(), id);
+    }
+  }
+
   /** Returns the reaction type ids a single message shows. */
   function classifyMessage(text) {
     const raw = String(text || "");
     const lower = raw.toLowerCase().replace(/(.)\1{2,}/g, "$1$1");
     const tokens = tokenize(raw).flatMap(variants);
     const found = [];
+    if (custom.size) {
+      for (const token of tokens) {
+        const id = custom.get(token.toLowerCase());
+        if (id && !found.includes(id)) found.push(id);
+      }
+    }
     for (const type of TYPES) {
       let hit = false;
       for (const token of tokens) {
@@ -145,7 +165,7 @@
       }
       if (!hit && type.phrases) hit = type.phrases.some((p) => lower.includes(p));
       if (!hit && type.patterns) hit = type.patterns.some((p) => p.test(raw.trim()));
-      if (hit) found.push(type.id);
+      if (hit && !found.includes(type.id)) found.push(type.id);
     }
     return found;
   }
@@ -182,5 +202,5 @@
     return main;
   }
 
-  return { TYPES, classifyMessage, profile, describe };
+  return { TYPES, classifyMessage, profile, describe, setCustomEmotes };
 });

@@ -161,6 +161,17 @@
     const video = payload && typeof payload.video === "object" ? payload.video : null;
     if (!video) return {};
     const number = (v) => (Number.isFinite(Number(v)) ? Number(v) : null);
+    // TwitchDownloader marks which words are emotes; count them so the
+    // Profile can suggest channel emotes to label.
+    const emoteCounts = new Map();
+    for (const comment of Array.isArray(payload.comments) ? payload.comments : []) {
+      for (const fragment of comment?.message?.fragments || []) {
+        if (fragment && fragment.emoticon && typeof fragment.text === "string") {
+          const name = fragment.text.trim();
+          if (name) emoteCounts.set(name, (emoteCounts.get(name) || 0) + 1);
+        }
+      }
+    }
     return {
       platform: "twitch",
       title: video.title || "",
@@ -178,6 +189,7 @@
           }))
           .filter((c) => Number.isFinite(c.start) && Number.isFinite(c.end) && c.end > c.start)
         : [],
+      emotes: [...emoteCounts].sort((a, b) => b[1] - a[1]).slice(0, 60).map(([name, count]) => ({ name, count })),
     };
   }
 

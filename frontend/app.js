@@ -9,7 +9,14 @@
   const X = window.ViewtopsyExplain;
   const Sample = window.ViewtopsySample;
   const SVG_NS = "http://www.w3.org/2000/svg";
-  const KEY_STORAGE = "viewtopsy.aiKey";
+  const P = window.ViewtopsyProfile;
+  const profileStore = P.store((() => {
+    try {
+      return window.localStorage;
+    } catch {
+      return null; // storage blocked: the profile lasts until the tab closes
+    }
+  })());
 
   const $ = (selector, scope = document) => scope.querySelector(selector);
   const $$ = (selector, scope = document) => [...scope.querySelectorAll(selector)];
@@ -35,6 +42,8 @@
     explanations: new Map(), // key -> {status: "loading"|"done"|"error", data, error}
     apiKey: "",
     explainer: null, // one per key and model choice; remembers the Gemini model that worked
+    profile: P.normalize({}),
+    view: "analyze",
   };
 
   // ---------------------------------------------------------------------------
@@ -83,17 +92,6 @@
     const node = Object.assign(document.createElement(tag), props);
     for (const child of [].concat(children)) if (child != null) node.append(child);
     return node;
-  }
-
-  function storage(action, value) {
-    try {
-      if (action === "get") return localStorage.getItem(KEY_STORAGE) || "";
-      if (action === "set") localStorage.setItem(KEY_STORAGE, value);
-      if (action === "clear") localStorage.removeItem(KEY_STORAGE);
-    } catch {
-      /* storage unavailable: key stays in memory only */
-    }
-    return "";
   }
 
   function fileStem() {
@@ -145,6 +143,7 @@
   // ---------------------------------------------------------------------------
 
   function acceptChat(messages, sourceName, info = {}) {
+    applyDefaults();
     state.messages = messages;
     state.sourceName = sourceName;
     state.info = info;
@@ -170,6 +169,7 @@
     // A trimmed TwitchDownloader export says where its clip starts; a video
     // downloaded with the same trim starts at that same point.
     setVideoOffset(info.clipStart != null ? info.clipStart : 0);
+    renderEmoteSuggestions();
   }
 
   function loadFile(file) {
@@ -226,9 +226,13 @@
     const parsed = A.extractVideoId($("#video-input").value);
     state.videoId = parsed.videoId;
     state.platform = parsed.platform || $("input[name=platform]:checked").value;
+    state.showingSetup = false;
+    // Show the results area before drawing so the chart can measure its width.
     $("#setup").hidden = true;
-    $("#results").hidden = false; // shown first so the chart can measure its width
+    $("#profile-view").hidden = true;
+    $("#results").hidden = false;
     runDetection();
+    showView("analyze");
     window.scrollTo({ top: 0 });
   }
 
@@ -628,6 +632,7 @@
   }
 
   function updateAiControls() {
+    updateAiSummary();
     const hasKey = Boolean(state.apiKey);
     const readyCount = state.result ? state.result.moments.filter(framesReady).length : 0;
     $("#explain-all").disabled = !(hasKey && readyCount);
@@ -698,7 +703,7 @@
           frames,
           chat: chat.filter((_, i) => i % step === 0),
           reactions: state.reactions.get(key),
-          context: { title: state.info.title, channel: state.info.channel },
+          context: aiContext(),
         },
       );
       state.explanations.set(key, { status: "done", data });
@@ -866,7 +871,7 @@
         zone,
         frames,
         chat,
-        context: { title: state.info.title, channel: state.info.channel },
+        context: aiContext(),
       });
       state.explanations.set(key, { status: "done", kind: "quiet", data });
     } catch (error) {
@@ -1034,9 +1039,8 @@
   });
 
   $("#new-analysis").addEventListener("click", () => {
-    $("#results").hidden = true;
-    $("#setup").hidden = false;
-    window.scrollTo({ top: 0 });
+    state.showingSetup = true;
+    showView("analyze");
   });
 
   $$("input[name=sensitivity]").forEach((input) => input.addEventListener("change", () => {
@@ -1053,27 +1057,222 @@
     runDetection();
   }));
 
-  // AI settings
-  const savedKey = storage("get");
-  if (savedKey) {
-    state.apiKey = savedKey;
-    $("#api-key").value = savedKey;
-    $("#remember-key").checked = true;
+  // ---------------------------------------------------------------------------
+  // Profile
+  // ---------------------------------------------------------------------------
+
+  function aiContext() {
+    return {
+      title: state.info.title,
+      channel: state.info.channel || state.profile.channel.name,
+      about: state.profile.channel.about,
+    };
   }
-  refreshModelMenu();
+
+  /** Puts the profile's defaults on the Analyze page's controls. */
+  function applyDefaults() {
+    const d = state.profile.defaults;
+    $(`input[name=sensitivity][value=${d.sensitivity}]`).checked = true;
+    $(`input[name=sort][value=${d.sort}]`).checked = true;
+    $("#window-seconds").value = String(d.windowSeconds);
+    $("#min-messages").value = String(d.minMessages);
+    $("#z-threshold").value = "";
+    if (!A.extractVideoId($("#video-input").value).platform) {
+      $(`input[name=platform][value=${state.profile.channel.platform}]`).checked = true;
+    }
+    $("#export-fps-note").textContent = `${d.fps} fps · change in Profile`;
+  }
+
+  let savedTimer;
+  function saveProfile() {
+    const ok = profileStore.save(state.profile, state.apiKey);
+    const note = $("#profile-saved");
+    note.textContent = ok ? "✓ Saved" : "Couldn't save: this browser is blocking storage, so changes last until you close the tab.";
+    clearTimeout(savedTimer);
+    if (ok) savedTimer = setTimeout(() => { note.textContent = ""; }, 1800);
+    updateAiSummary();
+  }
+
+  function fillProfileForm() {
+    const p = state.profile;
+    $("#api-key").value = state.apiKey;
+    $("#remember-key").checked = p.ai.rememberKey;
+    refreshModelMenu();
+    $("#ai-model").value = [...$("#ai-model").options].some((o) => o.value === p.ai.model) ? p.ai.model : "auto";
+    $("#channel-name").value = p.channel.name;
+    $("#channel-platform").value = p.channel.platform;
+    $("#channel-about").value = p.channel.about;
+    $("#emote-lines").value = P.formatEmoteLines(p.emotes);
+    $("#emote-errors").textContent = "";
+    $("#default-sensitivity").value = p.defaults.sensitivity;
+    $("#default-window").value = String(p.defaults.windowSeconds);
+    $("#default-min").value = String(p.defaults.minMessages);
+    $("#default-sort").value = p.defaults.sort;
+    $("#default-fps").value = String(p.defaults.fps);
+    R.setCustomEmotes(p.emotes);
+    renderEmoteSuggestions();
+    updateAiSummary();
+  }
+
+  function updateAiSummary() {
+    const provider = X.detectProvider(state.apiKey);
+    const summary = $("#ai-summary");
+    if (!provider) {
+      summary.textContent = "No API key yet. Add a free Gemini key in Profile.";
+    } else {
+      const model = state.explainer?.model || ($("#ai-model").value !== "auto" ? $("#ai-model").value : "automatic model");
+      summary.textContent = `Using ${X.PROVIDERS[provider].label} · ${model}`;
+    }
+    $("#ai-key-status").textContent = provider ? `Detected a ${X.PROVIDERS[provider].label} key.${state.profile.ai.rememberKey ? " It's remembered on this device." : ""}` : "";
+    $('.tab[data-view="profile"]').classList.toggle("needs-setup", !provider);
+  }
+
+  /** Channel emotes found in the loaded chat that the reader doesn't know yet. */
+  function renderEmoteSuggestions() {
+    const box = $("#emote-suggestions");
+    const list = $("#emote-suggestion-list");
+    list.replaceChildren();
+    const unknown = (state.info.emotes || [])
+      .filter((e) => e.count >= 3 && !state.profile.emotes[e.name] && !R.classifyMessage(e.name).length)
+      .slice(0, 16);
+    box.hidden = unknown.length === 0;
+    for (const emote of unknown) {
+      const select = el("select", { "aria-label": `Reaction for ${emote.name}` }, [
+        el("option", { value: "", textContent: "Pick…" }),
+        ...R.TYPES.map((t) => el("option", { value: t.id, textContent: t.label })),
+      ]);
+      select.addEventListener("change", () => {
+        if (!select.value) return;
+        state.profile.emotes = { ...state.profile.emotes, [emote.name]: select.value };
+        $("#emote-lines").value = P.formatEmoteLines(state.profile.emotes);
+        emotesChanged();
+      });
+      list.append(el("li", {}, [el("span", {}, [el("b", { textContent: emote.name }), el("span", { className: "hint", textContent: ` ×${emote.count}` })]), select]));
+    }
+  }
+
+  function emotesChanged() {
+    R.setCustomEmotes(state.profile.emotes);
+    saveProfile();
+    renderEmoteSuggestions();
+    if (state.result) runDetection();
+  }
+
+  $("#reaction-names").textContent = R.TYPES.map((t) => t.id).join(", ");
+
   $("#api-key").addEventListener("input", () => {
     state.apiKey = $("#api-key").value.trim();
-    if ($("#remember-key").checked) storage("set", state.apiKey);
     refreshModelMenu();
+    saveProfile();
     if (state.result) updateAiControls();
   });
   $("#ai-model").addEventListener("change", () => {
+    state.profile.ai.model = $("#ai-model").value;
+    saveProfile();
     if (state.result) updateAiControls();
   });
   $("#remember-key").addEventListener("change", () => {
-    if ($("#remember-key").checked && state.apiKey) storage("set", state.apiKey);
-    else storage("clear");
+    state.profile.ai.rememberKey = $("#remember-key").checked;
+    saveProfile();
+    updateAiSummary();
   });
+  $("#channel-name").addEventListener("input", () => {
+    state.profile.channel.name = $("#channel-name").value.trim();
+    saveProfile();
+  });
+  $("#channel-platform").addEventListener("change", () => {
+    state.profile.channel.platform = $("#channel-platform").value;
+    saveProfile();
+  });
+  $("#channel-about").addEventListener("input", () => {
+    state.profile.channel.about = $("#channel-about").value.trim();
+    saveProfile();
+  });
+  let emoteTimer;
+  $("#emote-lines").addEventListener("input", () => {
+    clearTimeout(emoteTimer);
+    emoteTimer = setTimeout(() => {
+      const labels = Object.fromEntries(R.TYPES.map((t) => [t.id, t.label]));
+      const { emotes, errors } = P.parseEmoteLines($("#emote-lines").value, labels);
+      $("#emote-errors").textContent = errors.slice(0, 3).join(" · ");
+      state.profile.emotes = emotes;
+      emotesChanged();
+    }, 400);
+  });
+  const defaultsFields = {
+    "#default-sensitivity": (v) => { state.profile.defaults.sensitivity = v; },
+    "#default-window": (v) => { state.profile.defaults.windowSeconds = Number(v); },
+    "#default-min": (v) => { state.profile.defaults.minMessages = Number(v); },
+    "#default-sort": (v) => { state.profile.defaults.sort = v; },
+    "#default-fps": (v) => { state.profile.defaults.fps = Number(v); },
+  };
+  for (const [selector, apply] of Object.entries(defaultsFields)) {
+    $(selector).addEventListener("change", () => {
+      apply($(selector).value);
+      state.profile = P.normalize(state.profile);
+      saveProfile();
+      $("#export-fps-note").textContent = `${state.profile.defaults.fps} fps · change in Profile`;
+    });
+  }
+
+  $("#profile-export").addEventListener("click", () => {
+    download("viewtopsy-profile.json", P.toExport(state.profile), "application/json");
+  });
+  $("#profile-import-file").addEventListener("change", (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try {
+        const imported = P.fromImport(String(reader.result));
+        imported.ai.rememberKey = state.profile.ai.rememberKey; // the file never carries the key
+        state.profile = imported;
+        fillProfileForm();
+        applyDefaults();
+        saveProfile();
+        toast("Profile loaded");
+        if (state.result) runDetection();
+      } catch (error) {
+        toast(error instanceof SyntaxError ? "That file isn't valid JSON." : error.message);
+      }
+      event.target.value = "";
+    };
+    reader.readAsText(file);
+  });
+  $("#profile-reset").addEventListener("click", () => {
+    if (!window.confirm("Reset your profile? This clears your saved API key, channel details, emotes and defaults on this device.")) return;
+    profileStore.clear();
+    state.profile = P.normalize({});
+    state.apiKey = "";
+    state.explainer = null;
+    fillProfileForm();
+    applyDefaults();
+    toast("Profile reset");
+    if (state.result) runDetection();
+  });
+
+  // Tabs
+  function showView(view) {
+    state.view = view;
+    $("#profile-view").hidden = view !== "profile";
+    $("#setup").hidden = view !== "analyze" || Boolean(state.result && !state.showingSetup);
+    $("#results").hidden = view !== "analyze" || !state.result || state.showingSetup;
+    for (const tab of $$(".tab")) {
+      if (tab.dataset.view === view) tab.setAttribute("aria-current", "page");
+      else tab.removeAttribute("aria-current");
+    }
+    if (view === "analyze" && state.result && !state.showingSetup) renderTimeline();
+    window.scrollTo({ top: 0 });
+  }
+  $$(".tab").forEach((tab) => tab.addEventListener("click", () => showView(tab.dataset.view)));
+  $$("[data-go]").forEach((button) => button.addEventListener("click", () => showView(button.dataset.go)));
+
+  const loaded = profileStore.load();
+  state.profile = loaded.profile;
+  state.apiKey = loaded.apiKey;
+  fillProfileForm();
+  applyDefaults();
+
   $("#explain-all").addEventListener("click", explainAll);
 
   // Existing clips
@@ -1103,7 +1302,7 @@
   function editorOptions() {
     return {
       videoOffset: state.videoOffset,
-      fps: Number($("#export-fps").value),
+      fps: state.profile.defaults.fps,
       title: state.info.title ? `${state.info.channel ? `${state.info.channel} - ` : ""}${state.info.title}` : "Viewtopsy markers",
       videoName: state.grabber?.file?.name || (state.videoId ? `${state.videoId}.mp4` : "video.mp4"),
       videoDuration: state.grabber?.duration || 0,

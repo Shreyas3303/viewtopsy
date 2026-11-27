@@ -27,9 +27,19 @@ The sample is a made-up 2-hour stream with nine planted events (a raid, a jump s
 2. **Drop the file** into Viewtopsy.
 3. Optionally **paste the VOD link**. Every moment then gets a *Watch* button that opens the video at that time. TwitchDownloader exports fill this in for you.
 4. Click **Find moments**.
-5. Optionally **add the video file** for frames, and an **API key** for explanations.
+5. Optionally **add the video file** for frames. Add an **API key** once in the **Profile** tab for explanations.
 
 **Trimmed downloads:** if you downloaded part of a stream (say 1:00:00–1:30:00) with TwitchDownloader, timestamps still match the full stream on Twitch, and *Video starts at* is filled in from the chat file so frames line up with your trimmed video. For other tools, set *Video starts at* to where your video file begins in the stream.
+
+### Profile
+
+The **Profile** tab keeps everything that doesn't change between streams, saved in your browser, so the Analyze page only shows the stream:
+
+- **AI settings:** API key (remembered only if you tick the box), model.
+- **Your channel:** name, main platform, and an "about" note the AI gets as background (regulars, running jokes, usual content).
+- **Channel emotes:** what your own emotes mean (`kaicFireMGM = hype`), so they count toward the right reaction. After loading a TwitchDownloader chat, Profile suggests the channel emotes it found that it can't read yet; pick a reaction to add one.
+- **Defaults** for each new analysis: sensitivity, window length, minimum messages, order, editor frame rate.
+- **Backup:** save or load the profile as a file to move it to another browser. The API key is never included.
 
 ### What you get
 
@@ -97,6 +107,7 @@ frontend/            Browser app (no build step)
   analysis.js        Detection, parsing and export (shared with tests)
   reactions.js       Emote-aware reaction reading
   insights.js        Spike types, quiet stretches, segments, clips, editor markers
+  profile.js         Saved profile: settings, channel, emotes, defaults
   frames.js          Grabs frames from a local video file
   explain.js         Gemini/Claude requests, model choice and reading answers
   sample.js          Generates the demo stream
