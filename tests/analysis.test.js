@@ -97,3 +97,9 @@ test("CSV and chapter exports", () => {
   assert.match(csv[1], /^1,10:00,600,50,30,9,7,boss \| down,https:\/\/www\.twitch\.tv\/videos\/123\?t=0h10m0s,"Boss, ""finally"""$/);
   assert.equal(A.toChapters(moments), '1:00 raid\n10:00 Boss, "finally"');
 });
+
+test("parses yt-dlp YouTube live_chat.json", () => {
+  const raw = require("fs").readFileSync(require("path").join(__dirname, "fixtures", "yt-dlp.live_chat.json"), "utf8");
+  const messages = A.parseChatExport(raw, "stream.live_chat.json");
+  assert.deepEqual(messages.map((m) => [m.timestamp, m.author, m.text]), [[4.2, "Amy", "hello :wave:"], [9, "Bob", "great stream"]]);
+});

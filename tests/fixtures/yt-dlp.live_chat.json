@@ -1,0 +1,4 @@
+{"replayChatItemAction": {"actions": [{"addChatItemAction": {"item": {"liveChatTextMessageRenderer": {"message": {"runs": [{"text": "hello "}, {"emoji": {"emojiId": "x", "shortcuts": [":wave:"]}}]}, "authorName": {"simpleText": "Amy"}}}, "clientId": ""}}], "videoOffsetTimeMsec": "4200"}}
+{"replayChatItemAction": {"actions": [{"addChatItemAction": {"item": {"liveChatMembershipItemRenderer": {"authorName": {"simpleText": "Joiner"}}}}}], "videoOffsetTimeMsec": "5000"}}
+{"replayChatItemAction": {"actions": [{"addChatItemAction": {"item": {"liveChatPaidMessageRenderer": {"message": {"runs": [{"text": "great stream"}]}, "authorName": {"simpleText": "Bob"}}}, "clientId": ""}}], "videoOffsetTimeMsec": "9000"}}
+{"replayChatItemAction": {"actions": [{"addChatItemAction": {"item": {"liveChatTextMessageRenderer": {"message": {"runs": [{"text": "waiting room"}]}, "authorName": {"simpleText": "Early"}}}, "clientId": ""}}], "videoOffsetTimeMsec": "-3000"}}

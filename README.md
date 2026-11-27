@@ -18,6 +18,7 @@ The sample is a made-up 2-hour stream with nine planted events (a raid, a jump s
    | Source | Format |
    | --- | --- |
    | [TwitchDownloader](https://github.com/lay295/TwitchDownloader) | JSON (`chatdownload`) |
+   | [yt-dlp](https://github.com/yt-dlp/yt-dlp) (YouTube) | `*.live_chat.json` from `yt-dlp --write-subs --sub-langs live_chat` |
    | [chat-downloader](https://github.com/xenova/chat-downloader) (YouTube, Twitch and more) | JSON or one-message-per-line JSON |
    | Anything else | CSV or JSON with a `timestamp` (seconds, `MM:SS` or `H:MM:SS`), a `message` and an optional `author` column |
 

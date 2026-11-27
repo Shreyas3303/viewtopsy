@@ -90,6 +90,34 @@
     });
   }
 
+  /** Turns YouTube's message "runs" (text pieces and emoji) into plain text. */
+  function runsToText(message) {
+    if (!message) return "";
+    if (typeof message.simpleText === "string") return message.simpleText;
+    return (message.runs || [])
+      .map((run) => run.text ?? run.emoji?.shortcuts?.[0] ?? run.emoji?.emojiId ?? "")
+      .join("");
+  }
+
+  /**
+   * yt-dlp saves YouTube chat replay (`*.live_chat.json`) as one
+   * replayChatItemAction per line. Expands one such line into plain rows.
+   * Joins, memberships and other system items have no text and get dropped later.
+   */
+  function expandYtDlpRow(row) {
+    const replay = row.replayChatItemAction;
+    const offsetMs = Number(replay.videoOffsetTimeMsec);
+    return (replay.actions || []).map((action) => {
+      const item = action.addChatItemAction?.item || {};
+      const renderer = item.liveChatTextMessageRenderer || item.liveChatPaidMessageRenderer || {};
+      return {
+        timestamp: offsetMs / 1000,
+        message: runsToText(renderer.message),
+        author: renderer.authorName?.simpleText ?? "",
+      };
+    });
+  }
+
   /** Maps one row from any supported export format to {timestamp, text, author}. */
   function normalizeRow(row) {
     // TwitchDownloader JSON
@@ -143,6 +171,7 @@
     }
 
     const messages = rows
+      .flatMap((row) => (row && row.replayChatItemAction ? expandYtDlpRow(row) : [row]))
       .map(normalizeRow)
       .filter((m) => Number.isFinite(m.timestamp) && m.timestamp >= 0 && m.text.trim())
       .sort((a, b) => a.timestamp - b.timestamp);

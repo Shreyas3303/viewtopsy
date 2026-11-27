@@ -37,6 +37,40 @@ def _message_from_row(row: dict) -> ChatMessage:
     return ChatMessage(parse_timestamp(timestamp), str(text), str(author))
 
 
+def _runs_to_text(message: dict | None) -> str:
+    """Turn YouTube's message "runs" (text pieces and emoji) into plain text."""
+    if not message:
+        return ""
+    if isinstance(message.get("simpleText"), str):
+        return message["simpleText"]
+    parts = []
+    for run in message.get("runs", []):
+        if "text" in run:
+            parts.append(run["text"])
+        elif "emoji" in run:
+            emoji = run["emoji"]
+            parts.append((emoji.get("shortcuts") or [emoji.get("emojiId", "")])[0])
+    return "".join(parts)
+
+
+def _expand(row: dict) -> list[dict]:
+    """yt-dlp's YouTube `*.live_chat.json` stores one replayChatItemAction per line."""
+    replay = row.get("replayChatItemAction")
+    if not isinstance(replay, dict):
+        return [row]
+    offset = float(replay.get("videoOffsetTimeMsec", "nan")) / 1000
+    rows = []
+    for action in replay.get("actions", []):
+        item = (action.get("addChatItemAction") or {}).get("item") or {}
+        renderer = item.get("liveChatTextMessageRenderer") or item.get("liveChatPaidMessageRenderer") or {}
+        rows.append({
+            "timestamp": offset,
+            "message": _runs_to_text(renderer.get("message")),
+            "author": (renderer.get("authorName") or {}).get("simpleText", ""),
+        })
+    return rows
+
+
 def _normalize(row: dict) -> dict:
     """Map known tool-specific shapes onto timestamp/message/author."""
     if "content_offset_seconds" in row:  # TwitchDownloader JSON
@@ -64,7 +98,7 @@ def _json_rows(raw: str) -> list[dict]:
 
 
 def load_chat(path: Path) -> list[ChatMessage]:
-    """Load generic JSON/CSV exports, TwitchDownloader JSON and chat-downloader JSON.
+    """Load generic JSON/CSV exports, TwitchDownloader JSON, chat-downloader JSON and yt-dlp live_chat.json.
 
     Rows without a timestamp or text are skipped, like in the web app.
     """
@@ -80,7 +114,7 @@ def load_chat(path: Path) -> list[ChatMessage]:
         raise ValueError("Chat input must be .json, .jsonl or .csv")
 
     messages = []
-    for row in rows:
+    for row in (expanded for raw in rows for expanded in _expand(raw)):
         try:
             message = _message_from_row(_normalize(row))
         except (ValueError, TypeError):

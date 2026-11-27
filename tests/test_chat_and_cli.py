@@ -84,3 +84,9 @@ def test_web_app_and_cli_agree():
     from_js = json.loads(output)
     from_py = [[m.timestamp, m.message_count, m.z_score, m.keywords] for m in find_moments(load_chat(EXAMPLE))]
     assert from_js == from_py
+
+
+def test_loads_yt_dlp_live_chat():
+    messages = load_chat(ROOT / "tests" / "fixtures" / "yt-dlp.live_chat.json")
+    # Membership item (no text) and the pre-stream message are dropped.
+    assert [(m.timestamp, m.author, m.text) for m in messages] == [(4.2, "Amy", "hello :wave:"), (9.0, "Bob", "great stream")]
