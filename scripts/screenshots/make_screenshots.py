@@ -183,42 +183,25 @@ def capture(chrome: str | None, chat: Path, video: Path) -> None:
 
             page.set_input_files("#chat-file", str(chat))
             page.wait_for_timeout(500)
-            page.locator("#setup").screenshot(path=str(OUT / "setup.png"))
-
             page.click("#analyze-button")
             page.wait_for_function("document.querySelector('#clips-status').textContent.startsWith('✓')", timeout=20000)
             page.set_input_files("#video-file", str(video))
             page.wait_for_function("document.querySelectorAll('.moment-card .filmstrip img').length >= 72", timeout=180000)
-            page.wait_for_function("document.querySelectorAll('.quiet-card .filmstrip img').length >= 4", timeout=60000)
             page.click("#explain-all")
-            page.wait_for_function("document.querySelectorAll('.explanation h4').length >= 10", timeout=60000)
+            page.wait_for_function("document.querySelectorAll('.moment-card .explanation h4').length >= 9", timeout=60000)
             page.wait_for_timeout(500)
 
+            # 1. The results: metrics, chart, chapters and mood strip.
             page.evaluate("window.scrollTo(0, 0)")
             top = page.locator("#results .results-head").bounding_box()["y"] - 20
-            bottom = page.locator(".timeline-panel").bounding_box()
-            page.screenshot(path=str(OUT / "results.png"), clip={"x": 0, "y": top, "width": 1240, "height": bottom["y"] + bottom["height"] - top + 16}, full_page=True)
-            page.locator("#shortlist").screenshot(path=str(OUT / "shortlist.png"))
+            panel = page.locator(".timeline-panel").bounding_box()
+            page.screenshot(path=str(OUT / "results.png"), clip={"x": 0, "y": top, "width": 1240, "height": panel["y"] + panel["height"] - top + 16}, full_page=True)
+            # 2. A moment explained: frames, reaction, AI explanation, signals, clip range.
             page.locator(".moment-card").first.screenshot(path=str(OUT / "moment.png"))
+            # 3. Clip these first.
+            page.locator("#shortlist").screenshot(path=str(OUT / "shortlist.png"))
+            # 4. Stream overview.
             page.locator("#overview").screenshot(path=str(OUT / "overview.png"))
-            page.locator(".quiet-card").first.screenshot(path=str(OUT / "quiet.png"))
-            page.locator(".insight-panel").screenshot(path=str(OUT / "inputs.png"))
-            page.locator(".export").screenshot(path=str(OUT / "export.png"))
-
-            page.fill("#chat-search", "clip")
-            page.wait_for_timeout(600)
-            page.locator(".timeline-panel").screenshot(path=str(OUT / "search.png"))
-            page.click("#message-close")
-            # Open the mood-strip stretch that covers the 1v4 clutch.
-            cells = page.locator("#story .mood-cell")
-            bucket = 7620 / cells.count()
-            cells.nth(int(2845 // bucket)).click()
-            page.wait_for_timeout(300)
-            page.locator(".timeline-panel").screenshot(path=str(OUT / "click-to-read.png"))
-
-            page.click('.tab[data-view="profile"]')
-            page.wait_for_timeout(300)
-            page.locator("#profile-view").screenshot(path=str(OUT / "profile.png"))
             browser.close()
     finally:
         server.terminate()
