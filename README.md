@@ -73,6 +73,11 @@ This uses Twitch's browser sign-in (implicit grant), so no client secret is need
   - An Anthropic key (`sk-ant-…`) works too and uses Claude.
   - The key type is detected automatically. You can still pick a specific model in the menu.
   - Explanations work when you open `frontend/index.html` yourself. Hosted previews that block outside connections can't reach the AI.
+- **Stream story strip** under the chart: the VOD's chapters (game/category) and chat's main mood over time (laughter, hype, shock, voting…), lined up with moments and quiet stretches.
+- **Search chat:** type a word or username to mark every mention on the chart and list the messages, each linking to the VOD 10 seconds earlier.
+- **Clip these first:** a shortlist ranked by a 0–100 clip score combining spike size, how many people reacted, first-time chatters, clip requests, spike type, AI confidence and whether it's already clipped, with the reasons shown. Also available as the **Best to clip** sort order.
+- **Suggested clip range** for each moment: starts a few seconds before the cause (the AI's cause time when it's confident, otherwise just before chat started rising) and ends when chat calms down. Marker exports use these ranges.
+- **More per-moment detail:** how long the hype lasted, first-time chatters (people whose first message in the chat is in this moment; skipped in the first 10 minutes of a file), chat asking for a clip ("CLIP IT", "!clip"), share of messages from subscribers or members versus usual, bits and Super Chats.
 - **Spike type** for every moment: *organic reaction*, *prompted* (chat answering a question or voting), *alert-driven* (subs, gifts, raids), *copypasta / spam wave*, or *hellos / goodbyes*. Prompted and alert spikes look big but tell you less about the content.
 - **Where chat went quiet:** stretches of 3+ minutes where chat ran well below its normal pace, shaded on the chart and listed with frames. With an API key, the AI says what was happening and suggests what to do about it (cut it, speed it up…).
 - **How each part of the stream did:** engagement per game or category, from the VOD's chapters (TwitchDownloader exports include them), or per time block.

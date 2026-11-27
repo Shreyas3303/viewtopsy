@@ -60,7 +60,7 @@
         sensitivity: pick(d.sensitivity, ["low", "medium", "high"], "medium"),
         windowSeconds: pick(Number(d.windowSeconds), [10, 15, 30, 60], 15),
         minMessages: Number.isInteger(minMessages) && minMessages >= 1 && minMessages <= 10000 ? minMessages : 5,
-        sort: pick(d.sort, ["rank", "time"], "rank"),
+        sort: pick(d.sort, ["score", "rank", "time"], "rank"),
         fps: pick(Number(d.fps), [24, 25, 30, 60], 30),
       },
     };

@@ -110,37 +110,71 @@
     return (replay.actions || []).map((action) => {
       const item = action.addChatItemAction?.item || {};
       const renderer = item.liveChatTextMessageRenderer || item.liveChatPaidMessageRenderer || {};
+      const badges = (renderer.authorBadges || []).map((b) => b.liveChatAuthorBadgeRenderer?.tooltip || "");
       return {
         timestamp: offsetMs / 1000,
         message: runsToText(renderer.message),
         author: renderer.authorName?.simpleText ?? "",
+        sub: badges.some((t) => /member/i.test(t)),
+        paid: Boolean(item.liveChatPaidMessageRenderer),
       };
     });
   }
 
-  /** Maps one row from any supported export format to {timestamp, text, author}. */
+  /** Bits in a Twitch message: the bits_spent field, or "Cheer100"-style words. */
+  function cheerBits(text) {
+    let total = 0;
+    for (const match of String(text).matchAll(/(?:^|\s)[A-Za-z]+?(\d{1,6})(?=\s|$)/g)) {
+      if (/^(cheer|biblethump|cheerwhal|corgo|uni|showlove|party|seemsgood|pride|kappa|frankerz|heyguys|dansgame|elegiggle|trihard|kreygasm|4head|swiftrage|notlikethis|failfish|vohiyo|pjsalt|mrdestructoid|bday|ripcheer|shamrock|bitboss|streamlabs|muxy|holidaycheer|goal|anon)\d/i.test(match[0].trim())) {
+        total += Number(match[1]);
+      }
+    }
+    return total;
+  }
+
+  /**
+   * Maps one row from any supported export format to
+   * {timestamp, text, author, sub, bits, paid}.
+   *   sub: subscriber (Twitch) or channel member (YouTube)
+   *   bits: Twitch bits cheered in the message
+   *   paid: a paid message (YouTube Super Chat)
+   */
   function normalizeRow(row) {
     // TwitchDownloader JSON
     if (row && "content_offset_seconds" in row) {
+      const text = String(row.message?.body ?? "");
+      const badges = (row.message?.user_badges || []).map((b) => String(b?._id || ""));
+      const spent = Number(row.message?.bits_spent) || 0;
       return {
         timestamp: Number(row.content_offset_seconds),
-        text: String(row.message?.body ?? ""),
+        text,
         author: String(row.commenter?.display_name ?? row.commenter?.name ?? ""),
+        sub: badges.includes("subscriber") || badges.includes("founder"),
+        bits: spent || cheerBits(text),
+        paid: false,
       };
     }
     // chat-downloader (YouTube) JSON uses time_in_seconds and nested author
     if (row && "time_in_seconds" in row) {
+      const badges = (row.author?.badges || []).map((b) => String(b?.title || ""));
       return {
         timestamp: Number(row.time_in_seconds),
         text: String(row.message ?? ""),
         author: String(row.author?.name ?? ""),
+        sub: badges.some((t) => /member|subscriber/i.test(t)),
+        bits: 0,
+        paid: row.message_type === "paid_message" || Boolean(row.money),
       };
     }
     const author = row.author ?? row.user ?? row.username ?? "";
+    const flag = (v) => v === true || /^(1|true|yes)$/i.test(String(v ?? ""));
     return {
       timestamp: parseTime(row.timestamp ?? row.time ?? row.offset),
       text: String(row.message ?? row.text ?? row.content ?? ""),
       author: String(typeof author === "object" ? author?.name ?? "" : author),
+      sub: flag(row.sub ?? row.subscriber ?? row.member),
+      bits: Number(row.bits) || 0,
+      paid: flag(row.paid),
     };
   }
 
@@ -419,12 +453,16 @@
     const header = [
       "rank", "timestamp", "seconds", "messages", "peak_per_window", "intensity_x", "z_score",
       "reaction", "type", "existing_clips", "keywords", "ai_title", "ai_trigger", "ai_what_happened", "ai_confidence", "link", "note",
+      "clip_score", "clip_in", "clip_out", "hype_seconds", "first_time_chatters", "clip_requests", "sub_share", "bits", "paid_messages",
     ];
     const rows = moments.map((m) => [
       m.rank, clock(m.timestamp), Math.floor(m.timestamp), m.messageCount, m.peakCount, m.intensity, m.zScore,
       m.reaction || "", m.kind?.label || "", m.clips == null ? "" : m.clips.length, m.keywords.join(" | "),
       m.ai?.title || "", m.ai?.triggerLabel || "", m.ai?.whatHappened || "", m.ai?.confidence || "",
       vodLink(platform, videoId, m.timestamp) || "", m.note || "",
+      m.clipScore ?? "", m.clipRange ? clock(m.clipRange.in) : "", m.clipRange ? clock(m.clipRange.out) : "",
+      m.signals ? m.signals.hype.duration : "", m.signals?.firstTimers ?? "", m.signals ? m.signals.clipRequests : "",
+      m.signals ? m.signals.audience.subShare.toFixed(2) : "", m.signals ? m.signals.audience.bits : "", m.signals ? m.signals.audience.paid : "",
     ]);
     return [header, ...rows].map((row) => row.map(csvCell).join(",")).join("\n");
   }

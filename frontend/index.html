@@ -82,12 +82,20 @@
         <div class="panel timeline-panel">
           <div class="timeline-head">
             <h3>Chat activity</h3>
-            <span class="hint">Click a marker to jump to that moment</span>
+            <label class="search-box">
+              <span class="sr-only">Search chat</span>
+              <input id="chat-search" type="search" placeholder="Search chat… (e.g. ramen, CLIP, a username)" autocomplete="off" spellcheck="false" />
+            </label>
           </div>
           <div id="timeline" class="timeline" role="img" aria-label="Chat activity over the stream"></div>
+          <div id="story" class="story" aria-label="Chapters and chat mood over the stream"></div>
           <div id="timeline-tooltip" class="timeline-tooltip" hidden></div>
+          <p class="chart-key hint" id="chart-key"></p>
           <p id="chat-overall" class="chat-overall"></p>
-          <p class="chart-key hint"><span class="key-quiet"></span> quiet stretch <span class="key-clip"></span> existing clip</p>
+          <div id="search-results" class="search-results" hidden>
+            <p id="search-summary"></p>
+            <ol id="search-list"></ol>
+          </div>
         </div>
 
         <div class="panel segments-panel" id="segments-panel" hidden>
@@ -149,6 +157,7 @@
           <div class="tool">
             <span class="tool-label" id="sort-label">Order</span>
             <div class="segmented" role="radiogroup" aria-labelledby="sort-label">
+              <label><input type="radio" name="sort" value="score" /><span>Best to clip</span></label>
               <label><input type="radio" name="sort" value="rank" checked /><span>Biggest first</span></label>
               <label><input type="radio" name="sort" value="time" /><span>By time</span></label>
             </div>
@@ -178,6 +187,14 @@
           <strong>No moments at this setting.</strong>
           <span>Try <button type="button" class="text-button" data-sensitivity="high">More</button> sensitivity, or a lower minimum in Advanced.</span>
         </div>
+
+        <section id="shortlist" class="panel shortlist" hidden aria-labelledby="shortlist-title">
+          <div class="section-head">
+            <h3 id="shortlist-title">Clip these first</h3>
+            <p class="hint">Ranked by spike size, how many people reacted, first-time chatters, clip requests, spike type, AI confidence and whether it’s already clipped.</p>
+          </div>
+          <ol id="shortlist-list"></ol>
+        </section>
 
         <div id="moment-list" class="moment-list"></div>
 
@@ -324,6 +341,7 @@
             </label>
             <label class="field">Order
               <select id="default-sort">
+                <option value="score">Best to clip</option>
                 <option value="rank">Biggest first</option>
                 <option value="time">By time</option>
               </select>
@@ -404,6 +422,12 @@
           <div class="filmstrip" hidden></div>
           <div class="explanation" hidden></div>
           <p class="clip-status" hidden></p>
+          <p class="moment-signals"></p>
+          <div class="clip-range">
+            <span class="score-pill" title="Clip score: how strong a clip candidate this is, relative to this stream"></span>
+            <span class="range-text"></span>
+            <button class="copy-range text-button" type="button">Copy range</button>
+          </div>
           <ul class="keyword-list"></ul>
           <ul class="sample-list"></ul>
           <input class="note-input" type="text" maxlength="80" placeholder="Add a note or clip title…" aria-label="Note for this moment" />

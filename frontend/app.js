@@ -30,6 +30,9 @@
     result: null,
     reactions: new Map(), // moment key -> reaction profile
     kinds: new Map(), // moment key -> {id, label, hint}
+    signals: new Map(), // moment key -> hype length, first-timers, clip requests, audience
+    mood: [], // chat's main reaction per time bucket
+    search: null, // current chat search
     quiet: [], // quiet stretches
     segments: null,
     clips: [], // existing Twitch clips, if loaded
@@ -116,6 +119,12 @@
   }
 
   function enrichedMoments() {
+    const list = baseMoments().map((m) => ({ ...m, clipRange: I.clipRange(m, m.signals, m.ai) }));
+    const scores = I.clipScores(list);
+    return list.map((m) => ({ ...m, clipScore: scores.get(m.windowStart)?.score ?? 0, clipReasons: scores.get(m.windowStart)?.reasons || [] }));
+  }
+
+  function baseMoments() {
     return state.result.moments.map((m) => {
       const explanation = state.explanations.get(m.windowStart);
       const reactions = state.reactions.get(m.windowStart);
@@ -128,6 +137,7 @@
         ai: explanation && explanation.status === "done" ? explanation.data : null,
         kind: state.kinds.get(m.windowStart) || null,
         clips: state.clipMatch ? state.clipMatch.byMoment.get(m.windowStart) || [] : null,
+        signals: state.signals.get(m.windowStart) || null,
       };
     });
   }
@@ -153,6 +163,8 @@
     state.frames.clear();
     state.clips = [];
     state.clipMatch = null;
+    state.search = null;
+    $("#chat-search").value = "";
     $("#clips-status").textContent = "";
 
     const first = messages[0].timestamp;
@@ -251,6 +263,16 @@
       state.reactions.set(m.windowStart, profile);
       state.kinds.set(m.windowStart, I.momentKind(inside, profile));
     }
+    const seen = I.firstSeen(state.messages);
+    const streamSubShare = state.messages.filter((m) => m.sub).length / state.messages.length;
+    state.signals.clear();
+    for (const m of state.result.moments) {
+      state.signals.set(m.windowStart, I.momentSignals(m, state.messages, state.result, { seen, streamSubShare }));
+    }
+    const chatStart = state.result.timelineStart;
+    const chatEnd = state.messages[state.messages.length - 1].timestamp + 1;
+    state.mood = I.moodTimeline(state.messages, { start: chatStart, end: chatEnd, bucket: I.moodBucket(chatEnd - chatStart) }, R.profile);
+    if (state.search) state.search = I.searchChat(state.messages, state.search.query);
     const windowSeconds = settings().windowSeconds;
     state.quiet = I.findQuietStretches(state.messages, state.result, { windowSeconds });
     state.segments = I.segmentScores(state.messages, state.result, { chapters: state.info.chapters || [], quiet: state.quiet });
@@ -298,12 +320,67 @@
 
     renderTimeline();
     renderSegments();
+    renderShortlist();
+    renderSearch();
     renderMoments();
     renderQuiet();
     renderUnmatchedClips();
     updateExportHint();
     updateAiControls();
     if (typeof updateFetchClipsButton === "function") updateFetchClipsButton();
+  }
+
+  function renderShortlist() {
+    const section = $("#shortlist");
+    const list = $("#shortlist-list");
+    list.replaceChildren();
+    const top = enrichedMoments().sort((a, b) => b.clipScore - a.clipScore).slice(0, 5);
+    section.hidden = top.length < 2;
+    for (const m of top) {
+      const title = m.note || m.ai?.title || m.keywords.slice(0, 3).join(" / ") || `Moment ${m.rank}`;
+      const watch = A.vodLink(state.platform, state.videoId, m.clipRange.in);
+      const go = el("button", { type: "button", className: "secondary-button small", textContent: "Details" });
+      go.addEventListener("click", () => focusMoment(m.windowStart));
+      list.append(el("li", {}, [
+        el("span", { className: "score-pill", textContent: String(m.clipScore), title: "Clip score" }),
+        el("div", {}, [
+          el("div", { className: "title", textContent: `${A.clock(m.clipRange.in)}–${A.clock(m.clipRange.out)} · ${title}` }),
+          el("div", { className: "why", textContent: [m.kind?.label, m.reaction, ...m.clipReasons.filter((r) => !/ranked lower/.test(r))].filter(Boolean).join(" · ") }),
+        ]),
+        el("div", { className: "actions" }, [
+          watch ? el("a", { className: "secondary-button small", href: watch, target: "_blank", rel: "noopener noreferrer", textContent: "Watch ↗" }) : null,
+          go,
+        ].filter(Boolean)),
+      ]));
+    }
+  }
+
+  function renderSearch() {
+    const box = $("#search-results");
+    const result = state.search;
+    const list = $("#search-list");
+    list.replaceChildren();
+    if (!result || !result.query) {
+      box.hidden = true;
+      return;
+    }
+    box.hidden = false;
+    $("#search-summary").textContent = result.total
+      ? `${result.total.toLocaleString()} message${result.total === 1 ? "" : "s"} mention “${result.query}”${result.total > result.matches.length ? ` (showing the first ${result.matches.length})` : ""}. Marked in blue on the chart.`
+      : `No messages mention “${result.query}”.`;
+    const lower = result.query.toLowerCase();
+    for (const m of result.matches) {
+      const href = A.vodLink(state.platform, state.videoId, Math.max(0, m.timestamp - 10));
+      const time = href
+        ? el("a", { href, target: "_blank", rel: "noopener noreferrer", textContent: A.clock(m.timestamp), title: "Watch from 10s before" })
+        : el("b", { textContent: A.clock(m.timestamp) });
+      const text = el("span", { title: m.text });
+      if (m.author) text.append(el("b", { textContent: `${m.author}: ` }));
+      const at = m.text.toLowerCase().indexOf(lower);
+      if (at >= 0) text.append(m.text.slice(0, at), el("mark", { textContent: m.text.slice(at, at + lower.length) }), m.text.slice(at + lower.length));
+      else text.append(m.text);
+      list.append(el("li", {}, [time, text]));
+    }
   }
 
   function renderSegments() {
@@ -355,7 +432,11 @@
     const list = $("#moment-list");
     list.replaceChildren();
     const sortBy = $("input[name=sort]:checked").value;
-    const moments = [...enrichedMoments()].sort((a, b) => (sortBy === "time" ? a.timestamp - b.timestamp : a.rank - b.rank));
+    const moments = [...enrichedMoments()].sort((a, b) => {
+      if (sortBy === "time") return a.timestamp - b.timestamp;
+      if (sortBy === "score") return b.clipScore - a.clipScore || a.rank - b.rank;
+      return a.rank - b.rank;
+    });
     const maxIntensity = Math.max(1, ...moments.map((m) => m.intensity));
 
     for (const moment of moments) {
@@ -403,6 +484,29 @@
           );
         }
       }
+
+      // Signals and suggested clip range
+      const sig = moment.signals;
+      const parts = [];
+      if (sig) {
+        parts.push(["Hype lasted ", el("b", { textContent: A.clock(sig.hype.duration) })]);
+        if (sig.firstTimers != null) parts.push([el("b", { textContent: String(sig.firstTimers) }), ` first-time chatter${sig.firstTimers === 1 ? "" : "s"}`]);
+        if (sig.clipRequests) parts.push([el("b", { textContent: String(sig.clipRequests) }), ` clip request${sig.clipRequests === 1 ? "" : "s"}`]);
+        if (sig.audience.streamSubShare > 0.01) {
+          parts.push([el("b", { textContent: `${Math.round(sig.audience.subShare * 100)}%` }), ` from subs (usually ${Math.round(sig.audience.streamSubShare * 100)}%)`]);
+        }
+        if (sig.audience.bits) parts.push([el("b", { textContent: sig.audience.bits.toLocaleString() }), " bits"]);
+        if (sig.audience.paid) parts.push([el("b", { textContent: String(sig.audience.paid) }), ` Super Chat${sig.audience.paid === 1 ? "" : "s"}`]);
+      }
+      const signalLine = $(".moment-signals", card);
+      parts.forEach((part, i) => signalLine.append(...(i ? [" · "] : []), ...part));
+      const range = moment.clipRange;
+      $(".score-pill", card).textContent = moment.clipScore;
+      $(".score-pill", card).title = `Clip score ${moment.clipScore}/100${moment.clipReasons.length ? `: ${moment.clipReasons.join(", ")}` : ""}`;
+      $(".range-text", card).textContent = `Suggested clip ${A.clock(range.in)} → ${A.clock(range.out)} (${range.length}s)${range.fromAi ? " · starts at the AI’s cause time" : ""}`;
+      $(".copy-range", card).addEventListener("click", () => {
+        copyText(`${A.clock(range.in)}-${A.clock(range.out)}`).then(() => toast("Clip range copied"));
+      });
 
       // Reactions
       const reactions = state.reactions.get(key);
@@ -947,6 +1051,20 @@
       root.append(tick);
     }
 
+    if (state.search && state.search.total) {
+      // One mark per window with matches, taller for more matches.
+      const counts = new Map();
+      for (const t of state.search.times) {
+        const i = Math.floor((t - timelineStart) / windowSeconds);
+        counts.set(i, (counts.get(i) || 0) + 1);
+      }
+      const most = Math.max(...counts.values());
+      for (const [i, n] of counts) {
+        const h = 4 + 10 * (n / most);
+        root.append(svg("rect", { class: "search-mark", x: x(timelineStart + i * windowSeconds), y: pad.top - 14, width: Math.max(2, plotW / timeline.length), height: h }));
+      }
+    }
+
     const hoverLine = svg("line", { class: "hover-line", y1: pad.top, y2: pad.top + plotH, visibility: "hidden" });
     root.append(hoverLine);
 
@@ -994,6 +1112,57 @@
     });
 
     host.append(root);
+    renderStory({ x, pad, width, timelineStart, total });
+  }
+
+  /** The strip under the chart: chapters, then chat's main reaction over time. */
+  function renderStory({ x, pad, width, timelineStart, total }) {
+    const host = $("#story");
+    host.replaceChildren();
+    const end = timelineStart + total;
+    const chapters = (state.info.chapters || []).filter((c) => c.end > timelineStart && c.start < end);
+    const height = chapters.length ? 44 : 22;
+    host.style.height = `${height}px`;
+    const root = svg("svg", { viewBox: `0 0 ${width} ${height}` });
+    let y = 2;
+    if (chapters.length) {
+      for (const c of chapters) {
+        const x1 = x(Math.max(c.start, timelineStart));
+        const x2 = x(Math.min(c.end, end));
+        root.append(svg("rect", { class: "chapter", x: x1, y, width: Math.max(1, x2 - x1), height: 18, rx: 4 }));
+        const label = svg("text", { class: "chapter-label", x: x1 + 6, y: y + 13 });
+        label.textContent = c.title;
+        const clip = svg("clipPath", { id: `chap-${Math.round(c.start)}` });
+        clip.append(svg("rect", { x: x1, y, width: Math.max(1, x2 - x1 - 4), height: 18 }));
+        root.append(clip);
+        label.setAttribute("clip-path", `url(#chap-${Math.round(c.start)})`);
+        root.append(label);
+      }
+      y += 22;
+    }
+    const used = new Set();
+    for (const b of state.mood) {
+      const x1 = x(b.start);
+      const x2 = x(b.end);
+      const rect = svg("rect", { class: `mood-${b.mood || "none"}`, x: x1, y, width: Math.max(1, x2 - x1 + 0.5), height: 16 });
+      const title = svg("title");
+      const label = b.mood ? R.TYPES.find((t) => t.id === b.mood)?.label : "No clear reaction";
+      title.textContent = `${A.clock(b.start)}–${A.clock(b.end)} · ${label} · ${b.count} messages`;
+      rect.append(title);
+      root.append(rect);
+      if (b.mood) used.add(b.mood);
+    }
+    host.append(root);
+
+    const key = $("#chart-key");
+    key.replaceChildren();
+    const item = (cls, text) => el("span", {}, [el("i", { className: cls }), text]);
+    key.append(el("b", { textContent: "Chat mood:" }));
+    for (const t of R.TYPES) if (used.has(t.id)) key.append(item(`mood-${t.id}`, t.label));
+    key.append(item("mood-none", "no clear reaction"));
+    if (state.quiet.length) key.append(el("span", {}, [el("i", { className: "key-quiet" }), "quiet stretch"]));
+    if (state.clips.length) key.append(el("span", {}, [el("i", { className: "key-clip" }), "existing clip"]));
+    if (state.search?.total) key.append(el("span", {}, [el("i", { className: "search-key" }), "search match"]));
   }
 
   // ---------------------------------------------------------------------------
@@ -1052,6 +1221,17 @@
     $(selector).addEventListener("change", runDetection);
   });
   $$("input[name=sort]").forEach((input) => input.addEventListener("change", renderMoments));
+  let searchTimer;
+  $("#chat-search").addEventListener("input", () => {
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      if (!state.messages.length) return;
+      const query = $("#chat-search").value;
+      state.search = query.trim() ? I.searchChat(state.messages, query) : null;
+      renderTimeline();
+      renderSearch();
+    }, 250);
+  });
   $$("[data-sensitivity]").forEach((button) => button.addEventListener("click", () => {
     $(`input[name=sensitivity][value=${button.dataset.sensitivity}]`).checked = true;
     $("#z-threshold").value = "";

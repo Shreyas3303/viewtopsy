@@ -420,6 +420,55 @@ button:disabled { cursor: not-allowed; }
 .twitch-actions div { display: flex; gap: 0.5rem; flex-wrap: wrap; }
 #fetch-clips { justify-self: start; }
 
+/* ---------- Story strip, search, shortlist, signals ---------- */
+
+.sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+.search-box input { width: min(320px, 70vw); padding: 0.4rem 0.75rem; border: 1px solid var(--line); border-radius: 99px; background: #fff; font-size: 0.85rem; }
+.story { height: 44px; margin-top: 2px; }
+.story svg { display: block; width: 100%; height: 100%; }
+.story .chapter { fill: var(--paper); stroke: var(--line); }
+.story .chapter-label { fill: var(--ink); font-size: 11px; font-weight: 700; }
+.story .row-label { fill: var(--muted); font-size: 10px; }
+.mood-laughter { fill: #f0d36b; background: #f0d36b; }
+.mood-hype { fill: #9fd34a; background: #9fd34a; }
+.mood-shock { fill: #f3a58f; background: #f3a58f; }
+.mood-tension { fill: #a996ef; background: #a996ef; }
+.mood-sad { fill: #8fb3df; background: #8fb3df; }
+.mood-love { fill: #f2a9c8; background: #f2a9c8; }
+.mood-voting { fill: #6cc3b9; background: #6cc3b9; }
+.mood-disapproval { fill: #b08a6c; background: #b08a6c; }
+.mood-confusion { fill: #c9c4b8; background: #c9c4b8; }
+.mood-support { fill: #e2b63c; background: #e2b63c; }
+.mood-greeting { fill: #9fc1d9; background: #9fc1d9; }
+.mood-none { fill: #eceae2; background: #eceae2; }
+.chart-key { gap: 0.3rem 0.8rem; }
+.chart-key i { display: inline-block; width: 12px; height: 10px; border-radius: 2px; margin-right: 0.25rem; vertical-align: middle; }
+.timeline .search-mark { fill: #2f6aa0; opacity: 0.85; }
+.chart-key .search-key { background: #2f6aa0; }
+.chart-key .key-quiet, .chart-key .key-clip { margin-left: 0; }
+
+.search-results { border-top: 1px solid var(--line); margin-top: 0.6rem; padding-top: 0.6rem; }
+.search-results p { margin: 0 0 0.4rem; font-size: 0.9rem; font-weight: 600; }
+.search-results ol { list-style: none; margin: 0; padding: 0; max-height: 260px; overflow-y: auto; display: grid; gap: 2px; }
+.search-results li { display: grid; grid-template-columns: 4.5rem minmax(0, 1fr); gap: 0.5rem; font-size: 0.85rem; padding: 0.2rem 0.4rem; border-radius: 6px; }
+.search-results li:nth-child(odd) { background: var(--paper); }
+.search-results li a { color: var(--forest); font-weight: 700; font-variant-numeric: tabular-nums; text-decoration: none; }
+.search-results li span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.search-results mark { background: #ffe58a; padding: 0 1px; }
+
+.shortlist { padding: 1rem 1.25rem; display: grid; gap: 0.6rem; }
+.shortlist ol { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.45rem; }
+.shortlist li { display: grid; grid-template-columns: auto minmax(0, 1fr) auto; gap: 0.75rem; align-items: center; padding: 0.55rem 0.7rem; border-radius: 10px; background: var(--paper); }
+.shortlist .title { font-weight: 700; }
+.shortlist .why { color: var(--muted); font-size: 0.82rem; }
+.shortlist .actions { display: flex; gap: 0.4rem; align-items: center; }
+.score-pill { display: inline-grid; place-items: center; min-width: 2.4rem; height: 2.4rem; border-radius: 50%; font-weight: 800; background: var(--forest); color: var(--lime); font-variant-numeric: tabular-nums; }
+.clip-range .score-pill { min-width: 2rem; height: 2rem; font-size: 0.85rem; }
+.moment-signals { margin: 0; font-size: 0.85rem; color: var(--muted); }
+.moment-signals b { color: var(--ink); }
+.clip-range { display: flex; align-items: center; gap: 0.6rem; flex-wrap: wrap; font-size: 0.88rem; }
+.clip-range .range-text { font-weight: 600; font-variant-numeric: tabular-nums; }
+
 /* ---------- Small screens ---------- */
 
 @media (max-width: 820px) {
@@ -431,6 +480,8 @@ button:disabled { cursor: not-allowed; }
   .insight-panel, .ai-grid { grid-template-columns: 1fr; }
   .segment { grid-template-columns: minmax(0, 1fr) auto; }
   .profile-grid { grid-template-columns: 1fr; }
+  .shortlist li { grid-template-columns: auto minmax(0, 1fr); }
+  .shortlist .actions { grid-column: 1 / -1; }
   .segment-bar { grid-column: 1 / -1; grid-row: 2; }
 }
 @media (max-width: 520px) {

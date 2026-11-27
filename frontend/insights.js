@@ -231,13 +231,18 @@
     return `${pad(Math.floor(s / 3600))}:${pad(Math.floor((s % 3600) / 60))}:${pad(s % 60)}:${pad(f)}`;
   }
 
+  /** Markers cover the suggested clip range when there is one, else the spike. */
+  function markerSpan(m) {
+    return m.clipRange ? { markIn: m.clipRange.in, markOut: m.clipRange.out } : { markIn: m.timestamp, markOut: m.windowEnd };
+  }
+
   function markerName(m) {
     return (m.note || m.ai?.title || m.keywords?.slice(0, 3).join(" / ") || "Moment").replace(/[|\r\n]+/g, " ").replace(/\s+/g, " ").trim();
   }
 
   function markerComment(m) {
     return [
-      `#${m.rank} · ${m.intensity}x chat · ${m.reaction || ""}${m.kind ? ` · ${m.kind.label}` : ""}`,
+      `#${m.rank} · ${m.intensity}x chat · ${m.reaction || ""}${m.kind ? ` · ${m.kind.label}` : ""}${m.clipScore != null ? ` · clip score ${m.clipScore}` : ""}`,
       m.ai?.whatHappened || "",
       m.clips && m.clips.length === 0 ? "Not clipped yet" : "",
     ].filter(Boolean).join(" — ").replace(/[|\r\n]+/g, " ");
@@ -252,14 +257,15 @@
     const lines = [`TITLE: ${title.replace(/[\r\n]+/g, " ")}`, "FCM: NON-DROP FRAME", ""];
     const colors = { organic: "ResolveColorRed", prompted: "ResolveColorBlue", alert: "ResolveColorYellow", copypasta: "ResolveColorPurple", greeting: "ResolveColorCyan" };
     [...moments]
-      .filter((m) => m.timestamp - videoOffset >= 0)
-      .sort((a, b) => a.timestamp - b.timestamp)
+      .map((m) => ({ ...m, ...markerSpan(m) }))
+      .filter((m) => m.markIn - videoOffset >= 0)
+      .sort((a, b) => a.markIn - b.markIn)
       .forEach((m, i) => {
-        const t = m.timestamp - videoOffset;
+        const t = m.markIn - videoOffset;
         const tcIn = timecode(t, fps, startHour);
         const tcOut = timecode(t + 1 / fps, fps, startHour);
         const color = colors[m.kind?.id] || "ResolveColorGreen";
-        const length = Math.max(1, Math.round((m.windowEnd - m.timestamp) * fps));
+        const length = Math.max(1, Math.round((m.markOut - m.markIn) * fps));
         lines.push(`${String(i + 1).padStart(3, "0")}  001      V     C        ${tcIn} ${tcOut} ${tcIn} ${tcOut}  `);
         lines.push(` |C:${color} |M:${markerName(m)} |D:${length}`);
         lines.push("");
@@ -279,14 +285,15 @@
     const duration = frames(videoDuration || Math.max(...moments.map((m) => m.windowEnd - videoOffset), 60));
     const rate = `<rate><timebase>${fps}</timebase><ntsc>FALSE</ntsc></rate>`;
     const markers = [...moments]
-      .filter((m) => m.timestamp - videoOffset >= 0)
-      .sort((a, b) => a.timestamp - b.timestamp)
+      .map((m) => ({ ...m, ...markerSpan(m) }))
+      .filter((m) => m.markIn - videoOffset >= 0)
+      .sort((a, b) => a.markIn - b.markIn)
       .map((m) => [
         "      <marker>",
         `        <name>${xml(`#${m.rank} ${markerName(m)}`)}</name>`,
         `        <comment>${xml(markerComment(m))}</comment>`,
-        `        <in>${frames(m.timestamp - videoOffset)}</in>`,
-        `        <out>${frames(m.windowEnd - videoOffset)}</out>`,
+        `        <in>${frames(m.markIn - videoOffset)}</in>`,
+        `        <out>${frames(m.markOut - videoOffset)}</out>`,
         "      </marker>",
       ].join("\n"))
       .join("\n");
@@ -352,6 +359,158 @@ ${markers}
     return { count: lags.length, median: Math.round(median), min: Math.round(lags[0]), max: Math.round(lags[lags.length - 1]) };
   }
 
+  // ---------------------------------------------------------------------------
+  // Per-moment signals
+  // ---------------------------------------------------------------------------
+
+  /** When each chatter first spoke in the loaded chat. */
+  function firstSeen(messages) {
+    const seen = new Map();
+    for (const m of messages) if (m.author && !seen.has(m.author)) seen.set(m.author, m.timestamp);
+    return seen;
+  }
+
+  const CLIP_REQUEST = /(^|\s)!clip\b|\bclip (it|that|this|ittt*)\b|\bclipped\b|\bclip clip\b/i;
+
+  /**
+   * Extra facts about a moment.
+   *  hype: how long chat stayed above normal, from when it started rising
+   *  firstTimers: chatters whose first message in this chat is inside the hype
+   *  clipRequests: messages asking for a clip ("CLIP IT", "!clip")
+   *  audience: subscriber/member share (vs the whole chat), bits, paid messages
+   */
+  function momentSignals(moment, messages, result, { seen, streamSubShare = 0 } = {}) {
+    const { timeline, timelineStart, mean } = result;
+    const w = moment.windowSeconds || 15;
+    const index = (t) => Math.floor((t - timelineStart) / w);
+    let i = Math.max(index(moment.peakTime), index(moment.windowEnd - w));
+    const limit = Math.min(timeline.length, i + Math.ceil(240 / w));
+    while (i + 1 < limit && timeline[i + 1] > mean) i += 1;
+    const start = moment.onsetTime ?? moment.windowStart;
+    const end = timelineStart + (i + 1) * w;
+
+    const inside = between(messages, start, end);
+    const authors = new Set(inside.map((m) => m.author).filter(Boolean));
+    // Early in the loaded chat almost everyone is "new", so the count only
+    // means something after the first 10 minutes.
+    const chatStart = messages.length ? messages[0].timestamp : 0;
+    let firstTimers = null;
+    if (seen && start - chatStart >= 600) {
+      firstTimers = 0;
+      for (const a of authors) if (seen.get(a) >= start) firstTimers += 1;
+    }
+    const subs = inside.filter((m) => m.sub).length;
+    return {
+      hype: { start, end, duration: end - start },
+      chatters: authors.size,
+      firstTimers,
+      firstTimerShare: firstTimers != null && authors.size ? firstTimers / authors.size : 0,
+      clipRequests: inside.filter((m) => CLIP_REQUEST.test(m.text)).length,
+      audience: {
+        subShare: inside.length ? subs / inside.length : 0,
+        streamSubShare,
+        bits: inside.reduce((sum, m) => sum + (m.bits || 0), 0),
+        paid: inside.filter((m) => m.paid).length,
+      },
+    };
+  }
+
+  /**
+   * Suggested clip in/out points (stream seconds). Starts a few seconds before
+   * the cause (the AI's cause time when it's confident and plausible, otherwise
+   * a little before chat started rising) and ends shortly after chat calms down.
+   */
+  function clipRange(moment, signals, ai = null) {
+    const onset = moment.onsetTime ?? moment.windowStart;
+    const cause = ai && ai.confidence !== "low" ? parseClock(ai.causeTime) : NaN;
+    const causeOk = Number.isFinite(cause) && cause >= onset - 45 && cause <= moment.peakTime + (moment.windowSeconds || 15);
+    const inPoint = Math.max(0, Math.round(causeOk ? cause - 4 : onset - 10));
+    let outPoint = Math.round((signals?.hype.end ?? moment.windowEnd) + 3);
+    outPoint = Math.min(Math.max(outPoint, inPoint + 15), inPoint + 90);
+    return { in: inPoint, out: outPoint, length: outPoint - inPoint, fromAi: causeOk };
+  }
+
+  const TYPE_WEIGHT = { organic: 1, alert: 0.6, prompted: 0.5, copypasta: 0.35, greeting: 0.2 };
+
+  /**
+   * "Clip these first": a 0-100 score per moment, relative to this stream,
+   * with the reasons behind it. Each moment needs .signals, and may have
+   * .kind, .ai and .clips (null when no clips were loaded).
+   * @returns Map<windowStart, {score, reasons: string[]}>
+   */
+  function clipScores(moments) {
+    const max = (pick) => Math.max(1e-9, ...moments.map(pick));
+    const maxZ = max((m) => m.zScore);
+    const maxChatters = max((m) => m.signals?.chatters || 0);
+    const maxFirst = max((m) => m.signals?.firstTimerShare || 0);
+    const out = new Map();
+    for (const m of moments) {
+      const sig = m.signals || {};
+      const spike = m.zScore / maxZ;
+      const breadth = (sig.chatters || 0) / maxChatters;
+      const fresh = (sig.firstTimerShare || 0) / maxFirst;
+      const asked = Math.min(1, (sig.clipRequests || 0) / 4);
+      const ai = m.ai ? { high: 1, medium: 0.8, low: 0.45 }[m.ai.confidence] ?? 0.6 : 0.7;
+      const type = TYPE_WEIGHT[m.kind?.id] ?? 0.8;
+      const clipped = m.clips == null ? 0.85 : m.clips.length === 0 ? 1 : 0.7;
+      const score = Math.round(100 * type * clipped * (0.35 * spike + 0.2 * breadth + 0.15 * fresh + 0.15 * asked + 0.15 * ai));
+
+      const reasons = [];
+      if (spike >= 0.8) reasons.push("one of the biggest spikes");
+      if (breadth >= 0.8) reasons.push(`${sig.chatters} people reacted`);
+      if ((sig.firstTimers || 0) >= 5 && fresh >= 0.6) reasons.push(`${sig.firstTimers} first-time chatters`);
+      if ((sig.clipRequests || 0) >= 2) reasons.push(`chat asked for a clip ${sig.clipRequests}×`);
+      if (m.clips && m.clips.length === 0) reasons.push("nobody has clipped it");
+      if (m.ai?.confidence === "high") reasons.push("clear cause in the frames");
+      if (type < 1 && m.kind) reasons.push(`${m.kind.label.toLowerCase()}, so ranked lower`);
+      out.set(m.windowStart, { score, reasons });
+    }
+    return out;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Stream story: chat's mood over time
+  // ---------------------------------------------------------------------------
+
+  /** A bucket size giving roughly 60-120 buckets, rounded to 30s steps. */
+  function moodBucket(duration) {
+    return Math.max(30, Math.round(duration / 90 / 30) * 30);
+  }
+
+  /**
+   * Main reaction per time bucket.
+   * @param profileFn ViewtopsyReactions.profile
+   * @returns [{start, end, mood: typeId|null, count}]
+   */
+  function moodTimeline(messages, { start, end, bucket }, profileFn) {
+    const rows = [];
+    let j = 0;
+    for (let t = start; t < end; t += bucket) {
+      const inside = [];
+      while (j < messages.length && messages[j].timestamp < t) j += 1;
+      for (let k = j; k < messages.length && messages[k].timestamp < t + bucket; k += 1) inside.push(messages[k]);
+      const p = profileFn(inside);
+      const top = p.types[0];
+      const read = Math.round(p.readShare * inside.length);
+      rows.push({ start: t, end: Math.min(end, t + bucket), mood: top && read >= 3 && top.share >= 0.3 ? top.id : null, count: inside.length });
+    }
+    return rows;
+  }
+
+  // ---------------------------------------------------------------------------
+  // Search
+  // ---------------------------------------------------------------------------
+
+  /** Messages containing `query` (case-insensitive; whole words for short queries). */
+  function searchChat(messages, query, { limit = 200 } = {}) {
+    const q = String(query || "").trim();
+    if (!q) return { query: q, total: 0, matches: [], times: [] };
+    const escaped = q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const pattern = q.length <= 3 ? new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}($|[^\\p{L}\\p{N}])`, "iu") : new RegExp(escaped, "i");
+    const all = messages.filter((m) => pattern.test(m.text) || pattern.test(m.author || ""));
+    return { query: q, total: all.length, matches: all.slice(0, limit), times: all.map((m) => m.timestamp) };
+  }
+
   return {
     KINDS,
     momentKind,
@@ -364,5 +523,12 @@ ${markers}
     toPremiereXml,
     parseClock,
     reactionLag,
+    firstSeen,
+    momentSignals,
+    clipRange,
+    clipScores,
+    moodBucket,
+    moodTimeline,
+    searchChat,
   };
 });
