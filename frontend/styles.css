@@ -402,10 +402,23 @@ button:disabled { cursor: not-allowed; }
 .emote-suggestions ul { list-style: none; margin: 0; padding: 0; display: grid; grid-template-columns: repeat(auto-fill, minmax(230px, 1fr)); gap: 0.4rem; }
 .emote-suggestions li { display: flex; align-items: center; gap: 0.5rem; justify-content: space-between; background: var(--paper); border-radius: 8px; padding: 0.3rem 0.4rem 0.3rem 0.65rem; font-size: 0.88rem; }
 .emote-suggestions li b { overflow: hidden; text-overflow: ellipsis; }
-.emote-suggestions select { padding: 0.25rem; border-radius: 6px; border: 1px solid var(--line); background: #fff; font-size: 0.8rem; }
+.emote-suggestions li > span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.emote-suggestions select { flex: none; width: 7.5rem; padding: 0.25rem; border-radius: 6px; border: 1px solid var(--line); background: #fff; font-size: 0.8rem; }
 .secondary-button.danger { border-color: #b23b1e; color: #b23b1e; }
 .secondary-button.danger:hover { background: #b23b1e; color: #fff; }
 .ai-summary { margin: 0; font-size: 0.9rem; font-weight: 600; }
+
+/* ---------- Twitch (beta) ---------- */
+
+.beta-tag { display: inline-block; font-size: 0.65rem; font-weight: 800; letter-spacing: 0.06em; text-transform: uppercase; padding: 0.1rem 0.4rem; border-radius: 5px; background: #ece4ff; color: #5a3fb0; vertical-align: middle; margin-left: 0.3rem; }
+.beta-panel { border-style: dashed; }
+.notice { margin: 0; padding: 0.6rem 0.8rem; border-radius: 10px; background: #fff4dc; border: 1px solid #f0d08a; font-size: 0.88rem; }
+.setup-steps { margin: 0 0 0.75rem; padding-left: 1.2rem; display: grid; gap: 0.4rem; font-size: 0.9rem; }
+.copy-row { display: flex; align-items: center; gap: 0.5rem; margin-top: 0.3rem; flex-wrap: wrap; }
+.copy-row code { background: var(--paper); border: 1px solid var(--line); padding: 0.25rem 0.5rem; border-radius: 6px; word-break: break-all; }
+.twitch-actions { align-content: start; }
+.twitch-actions div { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+#fetch-clips { justify-self: start; }
 
 /* ---------- Small screens ---------- */
 

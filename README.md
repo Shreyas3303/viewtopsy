@@ -41,6 +41,26 @@ The **Profile** tab keeps everything that doesn't change between streams, saved 
 - **Defaults** for each new analysis: sensitivity, window length, minimum messages, order, editor frame rate.
 - **Backup:** save or load the profile as a file to move it to another browser. The API key is never included.
 
+### Connect with Twitch (beta)
+
+Optional, and nothing else depends on it: loading a clips file keeps working without it. Connecting lets the app fetch a VOD's existing clips itself (the **Fetch clips from Twitch** button), instead of you running `fetch-clips` and loading the file.
+
+Twitch can only send you back to an `http://` address, so open Viewtopsy through the local server:
+
+```bash
+npm run serve        # then open http://localhost:8000
+# no Node? this works too:
+python -m http.server 8000 --directory frontend
+```
+
+One-time setup, also shown in the Profile tab:
+
+1. Create a free app at [dev.twitch.tv/console/apps](https://dev.twitch.tv/console/apps) (category: Analytics Tool, client type: Public).
+2. Set its **OAuth Redirect URL** to `http://localhost:8000/` (Profile shows the exact URL with a Copy button).
+3. Paste the app's **Client ID** into Profile and click **Connect with Twitch**.
+
+This uses Twitch's browser sign-in (implicit grant), so no client secret is needed or stored. The token asks for no extra permissions, is kept in this browser only (never in profile backup files), and expires after a while; just click Connect again. Disconnect forgets it; to fully revoke access, remove the app under Twitch Settings › Connections.
+
 ### What you get
 
 - **Chat activity chart** across the whole stream with numbered markers on each spike. Click a marker to jump to that moment.
@@ -108,6 +128,7 @@ frontend/            Browser app (no build step)
   reactions.js       Emote-aware reaction reading
   insights.js        Spike types, quiet stretches, segments, clips, editor markers
   profile.js         Saved profile: settings, channel, emotes, defaults
+  twitch.js          (beta) Connect with Twitch and fetch a VOD's clips
   frames.js          Grabs frames from a local video file
   explain.js         Gemini/Claude requests, model choice and reading answers
   sample.js          Generates the demo stream
@@ -123,6 +144,7 @@ scripts/             build-sample-chat.js regenerates example.json
 npm test             # JavaScript tests (Node 18+)
 python -m pytest     # Python tests, including a check that the web app and CLI agree
 npm run sample       # Regenerate data/chat/example.json after editing frontend/sample.js
+npm run serve        # Serve the app at http://localhost:8000 (needed for Connect with Twitch)
 ```
 
 `frontend/analysis.js` and `src/stream_moments/analyzer.py` implement the same algorithm. If you change one, change the other; `tests/test_chat_and_cli.py::test_web_app_and_cli_agree` will fail if they drift apart.

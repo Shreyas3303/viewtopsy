@@ -132,6 +132,7 @@
               <input id="clips-file" type="file" accept=".json,application/json" />
               <span><strong>Drop a clips file here</strong> or click to choose</span>
             </label>
+            <button id="fetch-clips" class="secondary-button small" type="button" hidden>Fetch clips from Twitch <span class="beta-tag">Beta</span></button>
             <p id="clips-status" class="hint" aria-live="polite"></p>
           </div>
         </div>
@@ -272,6 +273,34 @@
           </div>
         </div>
 
+        <div class="panel profile-panel beta-panel">
+          <h3>Twitch <span class="beta-tag">Beta</span></h3>
+          <p class="hint">Optional. Connect your Twitch account so Viewtopsy can fetch a VOD’s existing clips for you, instead of loading a clips file. Nothing else needs this.</p>
+          <p id="twitch-unsupported" class="notice" hidden></p>
+          <div id="twitch-setup">
+            <ol class="setup-steps">
+              <li>Create a free app at <a href="https://dev.twitch.tv/console/apps" target="_blank" rel="noopener noreferrer">dev.twitch.tv/console/apps</a> (category: Analytics Tool, client type: Public).</li>
+              <li>Set its <b>OAuth Redirect URL</b> to exactly:
+                <span class="copy-row"><code id="twitch-redirect"></code><button id="copy-redirect" type="button" class="secondary-button small">Copy</button></span>
+              </li>
+              <li>Paste the app’s <b>Client ID</b> here, then click Connect.</li>
+            </ol>
+            <div class="profile-grid">
+              <label class="field">Twitch Client ID
+                <input id="twitch-client-id" maxlength="64" autocomplete="off" spellcheck="false" placeholder="e.g. abcd1234…" />
+              </label>
+              <div class="field twitch-actions">
+                <span>Connection</span>
+                <div>
+                  <button id="twitch-connect" class="primary-button small" type="button">Connect with Twitch</button>
+                  <button id="twitch-disconnect" class="secondary-button small" type="button" hidden>Disconnect</button>
+                </div>
+              </div>
+            </div>
+            <p id="twitch-status" class="hint" aria-live="polite"></p>
+          </div>
+        </div>
+
         <div class="panel profile-panel">
           <h3>Defaults</h3>
           <div class="profile-grid four">
@@ -386,6 +415,7 @@
     <script src="reactions.js"></script>
     <script src="insights.js"></script>
     <script src="profile.js"></script>
+    <script src="twitch.js"></script>
     <script src="frames.js"></script>
     <script src="explain.js"></script>
     <script src="sample.js"></script>

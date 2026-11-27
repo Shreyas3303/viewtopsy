@@ -303,6 +303,7 @@
     renderUnmatchedClips();
     updateExportHint();
     updateAiControls();
+    if (typeof updateFetchClipsButton === "function") updateFetchClipsButton();
   }
 
   function renderSegments() {
@@ -1228,6 +1229,7 @@
         imported.ai.rememberKey = state.profile.ai.rememberKey; // the file never carries the key
         state.profile = imported;
         fillProfileForm();
+        renderTwitch();
         applyDefaults();
         saveProfile();
         toast("Profile loaded");
@@ -1245,7 +1247,9 @@
     state.profile = P.normalize({});
     state.apiKey = "";
     state.explainer = null;
+    state.twitch = null;
     fillProfileForm();
+    renderTwitch();
     applyDefaults();
     toast("Profile reset");
     if (state.result) runDetection();
@@ -1273,24 +1277,169 @@
   fillProfileForm();
   applyDefaults();
 
+  // ---------------------------------------------------------------------------
+  // Twitch (beta). Self-contained: if anything here fails, the rest of the app
+  // carries on, and loading a clips file still works.
+  // ---------------------------------------------------------------------------
+
+  const T = window.ViewtopsyTwitch;
+  const TWITCH_STATE = "viewtopsy.twitchState";
+  state.twitch = null;
+
+  function twitchUnsupported() {
+    if (!T) return "The Twitch module didn't load.";
+    if (/claude|artifact/i.test(location.hostname)) return "Twitch can't send you back to this preview. Run Viewtopsy with “npm run serve” and open http://localhost:8000.";
+    return T.unsupportedReason(location);
+  }
+
+  function renderTwitch(message) {
+    try {
+      const reason = twitchUnsupported();
+      $("#twitch-unsupported").hidden = !reason;
+      $("#twitch-unsupported").textContent = reason;
+      $("#twitch-setup").hidden = Boolean(reason) && !state.twitch;
+      $("#twitch-redirect").textContent = T && !reason ? T.redirectUri(location) : "http://localhost:8000/";
+      $("#twitch-client-id").value = state.profile.twitch.clientId;
+      const connected = Boolean(state.twitch);
+      $("#twitch-connect").hidden = connected;
+      $("#twitch-connect").disabled = Boolean(reason) || !state.profile.twitch.clientId;
+      $("#twitch-disconnect").hidden = !connected;
+      let status = message || "";
+      if (!status) {
+        if (connected) {
+          const days = state.twitch.expiresAt ? Math.max(0, Math.round((state.twitch.expiresAt - Date.now()) / 86400000)) : null;
+          status = `✓ Connected${state.twitch.login ? ` as ${state.twitch.login}` : ""}${days != null ? ` · expires in about ${days} day${days === 1 ? "" : "s"}` : ""}.`;
+        } else if (!state.profile.twitch.clientId) {
+          status = "Paste your app’s Client ID to enable Connect.";
+        }
+      }
+      $("#twitch-status").textContent = status;
+      updateFetchClipsButton();
+    } catch (error) {
+      console.error("Twitch beta:", error);
+    }
+  }
+
+  function updateFetchClipsButton() {
+    const button = $("#fetch-clips");
+    const ready = Boolean(state.twitch && state.result && state.platform === "twitch" && /^\d+$/.test(state.videoId || ""));
+    button.hidden = !ready;
+  }
+
+  async function finishTwitchRedirect() {
+    const result = T ? T.parseRedirect(location.hash, location.search) : null;
+    if (!result) return;
+    // Remove the token from the address bar and history right away.
+    history.replaceState(null, "", location.pathname);
+    let expected = "";
+    try {
+      expected = sessionStorage.getItem(TWITCH_STATE) || "";
+      sessionStorage.removeItem(TWITCH_STATE);
+    } catch {
+      /* no session storage */
+    }
+    showView("profile");
+    if (!expected || result.state !== expected) {
+      renderTwitch("Ignored a Twitch response this page didn't ask for. Click Connect to try again.");
+      return;
+    }
+    if (result.error) {
+      renderTwitch(result.error === "access_denied" ? "Connection cancelled on Twitch." : `Twitch said: ${result.description || result.error}`);
+      return;
+    }
+    const connection = { token: result.token, login: "", expiresAt: null, clientId: state.profile.twitch.clientId };
+    renderTwitch("Checking the connection with Twitch…");
+    try {
+      Object.assign(connection, await T.validateToken(result.token));
+      connection.clientId = connection.clientId || state.profile.twitch.clientId;
+    } catch (error) {
+      // Keep the token anyway; a later fetch will say if it doesn't work.
+      console.warn("Twitch beta: couldn't validate token", error);
+    }
+    state.twitch = connection;
+    profileStore.saveTwitch(connection);
+    renderTwitch();
+  }
+
+  $("#twitch-client-id").addEventListener("input", () => {
+    state.profile.twitch.clientId = $("#twitch-client-id").value.trim();
+    state.profile = P.normalize(state.profile);
+    saveProfile();
+    renderTwitch();
+  });
+  $("#copy-redirect").addEventListener("click", () => {
+    copyText($("#twitch-redirect").textContent).then(() => toast("Redirect URL copied"));
+  });
+  $("#twitch-connect").addEventListener("click", () => {
+    const clientId = state.profile.twitch.clientId;
+    if (!clientId || twitchUnsupported()) return;
+    if (state.result && !window.confirm("Connecting takes you to Twitch and back, which clears the current analysis. Continue?")) return;
+    const value = T.randomState();
+    try {
+      sessionStorage.setItem(TWITCH_STATE, value);
+    } catch {
+      renderTwitch("This browser is blocking session storage, which Connect needs.");
+      return;
+    }
+    location.assign(T.authorizeUrl({ clientId, redirect: T.redirectUri(location), state: value }));
+  });
+  $("#twitch-disconnect").addEventListener("click", () => {
+    profileStore.clearTwitch();
+    state.twitch = null;
+    renderTwitch("Disconnected. To fully revoke access, remove Viewtopsy under Twitch Settings › Connections.");
+  });
+  $("#fetch-clips").addEventListener("click", async () => {
+    const button = $("#fetch-clips");
+    button.disabled = true;
+    $("#clips-status").textContent = "Fetching clips from Twitch…";
+    try {
+      const result = await T.fetchVodClips(state.videoId, {
+        clientId: state.twitch.clientId || state.profile.twitch.clientId,
+        token: state.twitch.token,
+        onProgress: ({ clips }) => { $("#clips-status").textContent = `Fetching clips from Twitch… ${clips} found so far`; },
+      });
+      useClips(I.parseClips(result, state.videoId), "Twitch");
+      if (result.truncated) $("#clips-status").textContent += " (stopped after 2,000 of the channel’s clips)";
+    } catch (error) {
+      $("#clips-status").textContent = error.message;
+      if (error.reconnect) {
+        profileStore.clearTwitch();
+        state.twitch = null;
+        renderTwitch("Your Twitch connection expired. Click Connect to reconnect.");
+      }
+    }
+    button.disabled = false;
+  });
+
+  try {
+    state.twitch = profileStore.loadTwitch();
+    renderTwitch();
+    finishTwitchRedirect().catch((error) => console.error("Twitch beta:", error));
+  } catch (error) {
+    console.error("Twitch beta:", error);
+  }
+
   $("#explain-all").addEventListener("click", explainAll);
 
   // Existing clips
+  function useClips(clips, source) {
+    state.clips = clips;
+    if (!clips.length) {
+      $("#clips-status").textContent = `No clips with a position in this VOD were found in ${source}.`;
+    } else {
+      const first = state.messages[0]?.timestamp ?? 0;
+      const last = state.messages[state.messages.length - 1]?.timestamp ?? Infinity;
+      const inRange = clips.filter((c) => c.start + c.duration >= first && c.start <= last).length;
+      $("#clips-status").textContent = `✓ ${clips.length} clip${clips.length === 1 ? "" : "s"} loaded from ${source} · ${inRange} within this chat’s time range.`;
+    }
+    if (state.result) runDetection();
+  }
+
   dropZone($("#clips-zone"), $("#clips-file"), (file) => {
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const clips = I.parseClips(String(reader.result), state.videoId);
-        state.clips = clips;
-        if (!clips.length) {
-          $("#clips-status").textContent = "No clips with a position in this VOD were found in that file.";
-        } else {
-          const first = state.messages[0]?.timestamp ?? 0;
-          const last = state.messages[state.messages.length - 1]?.timestamp ?? Infinity;
-          const inRange = clips.filter((c) => c.start + c.duration >= first && c.start <= last).length;
-          $("#clips-status").textContent = `✓ ${clips.length} clip${clips.length === 1 ? "" : "s"} loaded · ${inRange} within this chat’s time range.`;
-        }
-        if (state.result) runDetection();
+        useClips(I.parseClips(String(reader.result), state.videoId), "that file");
       } catch (error) {
         $("#clips-status").textContent = `Couldn't read that file: ${error instanceof SyntaxError ? "it isn't valid JSON" : error.message}`;
       }

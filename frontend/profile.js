@@ -15,6 +15,7 @@
 
   const PROFILE_KEY = "viewtopsy.profile";
   const API_KEY_KEY = "viewtopsy.aiKey";
+  const TWITCH_KEY = "viewtopsy.twitch"; // beta: Twitch connection (token), kept out of backups
 
   const REACTION_IDS = ["laughter", "hype", "shock", "tension", "sad", "love", "disapproval", "voting", "confusion", "support", "greeting"];
 
@@ -22,6 +23,7 @@
     version: 1,
     ai: { rememberKey: false, model: "auto" },
     channel: { name: "", platform: "twitch", about: "" },
+    twitch: { clientId: "" },
     emotes: {},
     defaults: { sensitivity: "medium", windowSeconds: 15, minMessages: 5, sort: "rank", fps: 30 },
   });
@@ -49,6 +51,9 @@
         name: text(p.channel?.name, 60).trim(),
         platform: pick(p.channel?.platform, ["twitch", "youtube"], "twitch"),
         about: text(p.channel?.about, 600).trim(),
+      },
+      twitch: {
+        clientId: /^[a-z0-9]{1,64}$/i.test(String(p.twitch?.clientId || "").trim()) ? String(p.twitch.clientId).trim() : "",
       },
       emotes,
       defaults: {
@@ -138,6 +143,24 @@
       clear() {
         safe(() => storage.removeItem(PROFILE_KEY));
         safe(() => storage.removeItem(API_KEY_KEY));
+        safe(() => storage.removeItem(TWITCH_KEY));
+      },
+      /** Beta: the saved Twitch connection, or null if none or expired. */
+      loadTwitch(now = Date.now()) {
+        const raw = safe(() => storage.getItem(TWITCH_KEY), null);
+        const data = raw ? safe(() => JSON.parse(raw), null) : null;
+        if (!data || typeof data.token !== "string" || !data.token) return null;
+        if (data.expiresAt && data.expiresAt <= now) return null;
+        return { token: data.token, login: String(data.login || ""), expiresAt: Number(data.expiresAt) || null, clientId: String(data.clientId || "") };
+      },
+      saveTwitch(connection) {
+        return safe(() => {
+          storage.setItem(TWITCH_KEY, JSON.stringify(connection));
+          return true;
+        }, false);
+      },
+      clearTwitch() {
+        safe(() => storage.removeItem(TWITCH_KEY));
       },
     };
   }
